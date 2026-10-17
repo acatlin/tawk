@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reference · Answer pipeline</title>
+<meta name="description" content="The decision flow, the Answer shape, reason codes, the handoff policy and the grounding prompt, on one page.">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<main class="lesson" data-verified="2026-10-17" data-ask="Which reason code should I look at first when the handoff rate climbs?">
+
+<p class="kicker">Reference sheet · lessons 2, 4, 5, 6</p>
+<h1>Answer pipeline</h1>
+<p class="subtitle">FAQ → approved sources → honest fallback → human. The flow, the shapes, the codes, the policy.</p>
+
+<h2>Flow</h2>
+<figure class="diagram full">
+<svg viewBox="0 0 900 150" role="img" aria-label="Pipeline flow">
+  <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" class="arrowhead"/></marker></defs>
+  <rect class="node warm" x="10" y="40" width="130" height="50" rx="9"/><text x="75" y="60" text-anchor="middle" class="title">0 · human?</text><text x="75" y="76" text-anchor="middle" class="small">phrase list → handoff</text>
+  <path class="edge" d="M140 65 L170 65"/>
+  <rect class="node accent" x="170" y="40" width="130" height="50" rx="9"/><text x="235" y="60" text-anchor="middle" class="title">1 · FAQ</text><text x="235" y="76" text-anchor="middle" class="small">score ≥ t, gap ≥ m</text>
+  <path class="edge" d="M300 65 L330 65"/>
+  <rect class="node accent" x="330" y="40" width="150" height="50" rx="9"/><text x="405" y="60" text-anchor="middle" class="title">2 · retrieve</text><text x="405" y="76" text-anchor="middle" class="small">isAllowedUrl() filter</text>
+  <path class="edge" d="M480 65 L510 65"/>
+  <rect class="node accent" x="510" y="40" width="150" height="50" rx="9"/><text x="585" y="60" text-anchor="middle" class="title">2 · Claude</text><text x="585" y="76" text-anchor="middle" class="small">citations: enabled</text>
+  <path class="edge" d="M660 65 L690 65"/>
+  <rect class="node" x="690" y="40" width="90" height="50" rx="9"/><text x="735" y="60" text-anchor="middle">grounded?</text><text x="735" y="76" text-anchor="middle" class="small">≥1 citation</text>
+  <path class="edge" d="M780 55 L810 55"/>
+  <rect class="node accent" x="810" y="35" width="80" height="40" rx="9"/><text x="850" y="60" text-anchor="middle" class="title">answer</text>
+  <path class="edge" d="M735 90 L735 115 L850 115 L850 95"/>
+  <rect class="node warm" x="780" y="100" width="110" height="36" rx="9"/><text x="835" y="123" text-anchor="middle" class="small">3 · fallback → handoff</text>
+</svg>
+</figure>
+
+<h2>Shapes</h2>
+<pre data-lang="typescript"><code>interface Answer {
+  tier: "faq" | "sources" | "fallback";
+  text: string;
+  citations: { title: string; url?: string; quote?: string }[];
+  confidence: number;      // FAQ score, 1 for grounded answers, 0 for fallbacks
+  handoff: boolean;        // UI should offer or trigger escalateToHuman()
+  reason: string;          // analytics key, see below
+}</code></pre>
+
+<h2>Reason codes and what they tell you</h2>
+<table>
+  <thead><tr><th>reason</th><th>Meaning</th><th>Weekly action</th></tr></thead>
+  <tbody>
+    <tr><td><code>visitor-requested-human</code></td><td>Tier 0 matched a phrase</td><td>Review phrases for false positives (“human resources”)</td></tr>
+    <tr><td><code>faq:&lt;id&gt;</code></td><td>Tier 1 hit</td><td>Spot-check a sample; watch for near-threshold scores</td></tr>
+    <tr><td><code>no-approved-chunks</code></td><td>Retrieval found nothing allowed</td><td>Crawl gap or FAQ gap: add pages to the index or variants to the FAQ</td></tr>
+    <tr><td><code>model-declined</code></td><td>Claude replied <code>NOT_IN_SOURCES</code></td><td>The pages do not answer it, or the chunks were poor; check chunking and top-k</td></tr>
+    <tr><td><code>insufficient-citations</code></td><td>Text without allowed citations</td><td>Prompt drift or a citation pointing at a disallowed URL; inspect</td></tr>
+    <tr><td><code>grounded</code></td><td>Tier 2 answered with citations</td><td>Celebrate; sample for quality</td></tr>
+  </tbody>
+</table>
+
+<h2>FAQ dials</h2>
+<p><code>strategy</code> (<code>exact</code> | <code>jaccard</code> | <code>tfidf</code>) · <code>threshold</code> (minimum top score, 0..1) · <code>margin</code> (minimum gap to runner-up). Tune on a test set: zero wrong first, then fewest missed.</p>
+
+<h2>Grounding prompt (rules)</h2>
+<pre data-lang="text"><code>1. Use only facts that appear in the documents. Do not use outside knowledge, even if you are confident.
+2. Cite the documents for every factual sentence.
+3. If the documents do not contain the answer, reply with exactly: NOT_IN_SOURCES
+   and nothing else. Saying so is the correct answer, not a failure.
+4. Be brief and concrete: two to five sentences, plain language, no preamble.
+5. Never invent URLs, prices, dates or policy details.</code></pre>
+<p class="small muted">Giving the model explicit permission to say it does not know is Anthropic’s first listed hallucination-reduction technique.<a class="cite" href="https://platform.claude.com/docs/en/test-and-evaluate/strengthen-guardrails/reduce-hallucinations">Claude docs: reduce hallucinations</a></p>
+
+<h2>Handoff policy (summary)</h2>
+<table>
+  <thead><tr><th>Trigger</th><th>UI</th></tr></thead>
+  <tbody>
+    <tr><td>Explicit request</td><td>Open the widget now</td></tr>
+    <tr><td>Any fallback</td><td>Fallback text + “Talk to a person” button; auto-open on the second fallback in a session</td></tr>
+    <tr><td>Escalation vocabulary</td><td>Answer if possible; always show the button</td></tr>
+    <tr><td>Near-threshold FAQ hit</td><td>Answer + “Did that help?”</td></tr>
+    <tr><td>Status offline</td><td>Ticket or email path; never an empty chat</td></tr>
+  </tbody>
+</table>
+<p>Travels with the visitor: <code>login(userId, hash)</code>; attributes <code>bot-last-tier</code>, <code>bot-last-reason</code>; tag and event <code>bot-handoff</code>; drafted summary ending with a session reference (payloads from tawk.to do not include attributes, so the transcript must carry the reference itself).</p>
+
+<h2>Where each piece lives</h2>
+<table>
+  <thead><tr><th>Piece</th><th>File</th><th>Lesson</th></tr></thead>
+  <tbody>
+    <tr><td>FAQ matcher</td><td><code>examples/src/faq-match.ts</code></td><td>4</td></tr>
+    <tr><td>Allow-list guard</td><td><code>examples/src/allowed-sources.ts</code></td><td>5</td></tr>
+    <tr><td>Claude with citations</td><td><code>examples/src/grounded-answer.ts</code></td><td>5</td></tr>
+    <tr><td>Orchestration</td><td><code>examples/src/pipeline.ts</code></td><td>6</td></tr>
+    <tr><td>Secure mode hash</td><td><code>examples/src/tawk-secure-mode.ts</code></td><td>2</td></tr>
+    <tr><td>Webhook handler</td><td><code>examples/src/tawk-webhook.ts</code>, <code>examples/api/tawk-webhook.ts</code></td><td>3</td></tr>
+    <tr><td>Graph prototype</td><td><code>examples/src/graph-lite.ts</code></td><td>7</td></tr>
+  </tbody>
+</table>
+
+</main>
+<script src="../assets/course.js"></script>
+</body>
+</html>

@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 2 · Hand off with context: driving the widget</title>
+<meta name="description" content="Embed the tawk.to widget, identify the visitor securely, attach attributes, tags and events, draft a summary, and open the chat: a handoff where nobody repeats themselves.">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<main class="lesson" data-verified="2026-10-17" data-ask="My app is a single-page app where the user logs in after the widget loads. Which identification path do I use, and where exactly does the hash come from?">
+
+<p class="kicker">Lesson 2 of 8 · The human channel</p>
+<h1>Hand off with context: driving the widget</h1>
+<p class="subtitle">In Pattern A your bot talks first. When it hands off, the human agent should already know who this is, what was tried, and why. The JavaScript API gives you exactly the levers to make that true.</p>
+
+<div class="meta">
+  <span><b>Time</b> 30 minutes</span>
+  <span><b>Builds on</b> Lesson 1</span>
+  <span><b>Win</b> An <code>escalateToHuman()</code> that identifies the visitor, attaches context, drafts a summary and opens the chat, verified against a simulator</span>
+</div>
+
+<div class="objectives">
+  <span class="label">By the end you can</span>
+  <ul>
+    <li>Embed the widget correctly and call the API only when it is ready.</li>
+    <li>Identify the visitor with secure mode, with the hash computed on your Vercel server.</li>
+    <li>Attach attributes, tags and events within tawk.to’s documented limits, and draft the handoff summary.</li>
+    <li>Use callbacks to coordinate your bot’s UI with the widget’s lifecycle.</li>
+  </ul>
+</div>
+
+<h2>Why this matters for your bot</h2>
+<p>A handoff is a seam between two surfaces, and seams are where visitors repeat themselves and churn. The only thing that makes the seam invisible is <em>context transfer</em>: identity (so the agent sees the account and the previous conversations), structured facts (what tier answered, what failed), and a human-readable summary as the first message. tawk.to exposes one documented lever for each.</p>
+
+<h2>Embed, then wait</h2>
+<p>The widget script URL is <code>https://embed.tawk.to/{propertyId}/{widgetId}</code>; the default widget’s ID is <code>default</code>. tawk.to’s own Android sample and its React wrapper build exactly that URL.<a class="cite" href="https://bitbucket.org/tawkto/widget-embed-android">tawk.to official Android sample (Bitbucket)</a><a class="cite" href="https://github.com/tawk/tawk-messenger-react">tawk-messenger-react (GitHub)</a></p>
+
+<pre data-lang="html" data-file="your page, before &lt;/body&gt;"><code>&lt;script&gt;
+  var Tawk_API = Tawk_API || {}, Tawk_LoadStart = new Date();
+  // Settings that must exist BEFORE the script loads:
+  Tawk_API.autoStart = false;                 // connect only when you need it (privacy, performance)
+  Tawk_API.customStyle = { zIndex: 1000 };    // officially: zIndex only
+  (function () {
+    var s1 = document.createElement('script'), s0 = document.getElementsByTagName('script')[0];
+    s1.async = true;
+    s1.src = 'https://embed.tawk.to/' + PROPERTY_ID + '/' + WIDGET_ID;
+    s1.charset = 'UTF-8';
+    s1.setAttribute('crossorigin', '*');
+    s0.parentNode.insertBefore(s1, s0);
+  })();
+&lt;/script&gt;</code></pre>
+
+<p>Three things are read <em>at load time</em> and are ignored if set later: <code>visitor</code>, <code>customStyle</code>, and <code>autoStart</code>. Everything else is a method you call <strong>after</strong> the widget is ready; the reference wraps every example in <code>onLoad</code>, and the help centre calls calling methods too early “one of the most common mistakes.”<a class="cite" href="https://developer.tawk.to/jsapi/">tawk.to JavaScript API reference</a><a class="cite" href="https://help.tawk.to/article/behind-the-scenes-javascript-api">tawk.to Help: behind the scenes of the JavaScript API</a>
+<span class="sidenote"><span class="n">autoStart</span> With <code>autoStart = false</code> the widget stays hidden and disconnected until you call <code>Tawk_API.start({ showWidget: true })</code>. For a bot-first UI that is the right default: the human channel appears when the bot decides it is needed.</span></p>
+
+<p>Using React? The official package <code>@tawk.to/tawk-messenger-react</code> exposes the same callbacks as <code>tawkOn*</code> props and the same methods on a ref (<code>tawkSetAttributes</code>, <code>tawkAddTags</code>, <code>tawkMaximize</code>…).<a class="cite" href="https://github.com/tawk/tawk-messenger-react/blob/main/docs/api-reference.md">tawk-messenger-react API reference</a> Its last npm release is 2.0.2 from 2023, so treat it as a thin convenience over the snippet above rather than a moving target.</p>
+
+<h2>Identify the visitor: secure mode</h2>
+<p>Unidentified visitors are fine for anonymous help. For anyone signed into your product, identify them so the agent sees their history and so attributes stick to a person. tawk.to accepts a name and email only when accompanied by a <strong>hash</strong>: “The hash is server side generated HMAC using SHA256, the user’s email and your site’s API key.”<a class="cite" href="https://developer.tawk.to/jsapi/">tawk.to JavaScript API reference</a> The key lives at Administration → Overview → JavaScript API, where you enable Secure Mode and copy it.<a class="cite" href="https://help.tawk.to/article/how-to-generate-a-hash-for-javascript-api">tawk.to Help: generating a hash for the JavaScript API</a> It never ships to the browser.</p>
+
+<p>Three documented ways to pass identity, pick by when you know who the user is:<a class="cite" href="https://developer.tawk.to/set-name-email-through-the-javascript-api/">tawk.to developer portal: set name and email</a></p>
+<ol>
+  <li><strong>Known before the page loads</strong>: set <code>Tawk_API.visitor = { name, email, hash }</code> before the script.</li>
+  <li><strong>Known later</strong> (single-page app, AJAX login): inside <code>onLoad</code>, call <code>Tawk_API.setAttributes({ name, email, hash }, cb)</code>.</li>
+  <li><strong>You want previous conversations restored</strong> (same person, web and Android): <code>Tawk_API.login({ userId, hash, name, email }, cb)</code>, where the hash is “a combination of userId + site API key using HMAC SHA256”; it “will retrieved the conversation of the user if it has existing before.”<a class="cite" href="https://developer.tawk.to/jsapi/">tawk.to JavaScript API reference</a></li>
+</ol>
+
+<div class="callout warn">
+  <span class="label">A documented ambiguity</span>
+  <p>The reference page hashes the <em>email</em> for <code>visitor</code>/<code>setAttributes</code> and the <em>userId</em> for <code>login</code>; three help-centre articles say “user ID” for both. The <code>login</code> case is unambiguous. For <code>setAttributes</code>, follow the reference page’s PHP example (email), test once against your dashboard, and keep the identifier in one place in code so switching is a one-line change. A wrong hash does not throw loudly: “If the hash is missing or doesn’t match, the widget will not update the visitor’s details.”<a class="cite" href="https://help.tawk.to/article/setting-a-visitors-name-and-email-in-the-pre-chat-form-using-javascript-api">tawk.to Help: pre-chat name and email with the JavaScript API</a> <code>login</code> reports a 401 in the console when the hash and userId disagree.<a class="cite" href="https://help.tawk.to/article/how-to-set-up-logins-with-a-hash-using-javascript-api">tawk.to Help: logins with a hash</a></p>
+</div>
+
+<p>The server side is tiny. From the tested module:</p>
+<pre data-lang="typescript" data-file="examples/src/tawk-secure-mode.ts"><code>import { createHmac } from "node:crypto";
+
+/** HMAC-SHA256 (hex) of an identifier (email for `visitor`, userId for `login`) with the site API key. */
+export function visitorHash(identifier: string, siteApiKey: string): string {
+  return createHmac("sha256", siteApiKey).update(identifier, "utf8").digest("hex");
+}</code></pre>
+<pre data-lang="typescript" data-file="api/tawk-identity.ts (Vercel Function, sketch)"><code>import { visitorHash } from "../src/tawk-secure-mode.js";
+
+export async function GET(request: Request): Promise&lt;Response&gt; {
+  const user = await requireSession(request);           // your auth: never trust a userId from the query string
+  if (!user) return new Response("unauthenticated", { status: 401 });
+  const key = process.env.TAWK_SITE_API_KEY!;
+  return Response.json({
+    userId: user.id,
+    hash: visitorHash(user.id, key),                      // for Tawk_API.login
+    emailHash: visitorHash(user.email, key),              // for visitor / setAttributes
+    name: user.name, email: user.email,
+  });
+}</code></pre>
+
+<h2>Attach context the agent can use</h2>
+<table>
+  <thead><tr><th>Lever</th><th>Use it for</th><th>Documented limits</th></tr></thead>
+  <tbody>
+    <tr><td><code>setAttributes({...}, cb)</code></td><td>Structured facts shown in the visitor panel: <code>bot-last-tier</code>, <code>bot-last-reason</code>, <code>plan</code>, <code>order-id</code></td><td>Keys alphanumeric and dashes only, lower-cased; 50 custom attributes; values non-empty, at most 255 characters; name/email need secure mode</td></tr>
+    <tr><td><code>addTags([...], cb)</code></td><td>Routing and reporting: <code>bot-handoff</code>, <code>billing</code></td><td>10 tags total; errors include <code>TAG_LIMIT_EXCEEDED</code></td></tr>
+    <tr><td><code>addEvent(name, meta, cb)</code></td><td>A timeline entry: <code>bot-handoff</code> with <code>{ reason }</code></td><td>Name alphanumeric and dashes; same key/value rules as attributes</td></tr>
+    <tr><td><code>setChatInputMessage(text, cb)</code></td><td>Draft the summary so the visitor sends it as the first message</td><td>Drafts only; added in widget 4.2.0 (September 2026)</td></tr>
+    <tr><td><code>maximize()</code> / <code>start({ showWidget: true })</code></td><td>Open the human channel at the moment of handoff</td><td>Call after <code>onLoad</code></td></tr>
+  </tbody>
+</table>
+<p class="small muted">Limits and error codes from the reference.<a class="cite" href="https://developer.tawk.to/jsapi/">tawk.to JavaScript API reference</a> Every setter takes a callback that receives an error string or nothing; log it, because these calls fail silently otherwise.</p>
+
+<p>Why draft rather than send? Because tawk.to has no send. The draft is the honest version of “bot posts a summary”: the visitor reads it, edits it if the bot got something wrong, and presses Send, so the first message the agent sees is a vetted summary rather than a blank “hi”.</p>
+
+<h2>Coordinate the two surfaces</h2>
+<p>Callbacks are how your UI follows the widget. The ones that matter for handoff:</p>
+<ul>
+  <li><code>onChatStarted</code>: hide your bot composer; the human channel owns the conversation now.</li>
+  <li><code>onAgentJoinChat({ name, position, image, id })</code>: show “Dana joined” in your UI; stop any bot timers.</li>
+  <li><code>onChatMessageAgent(message)</code>: since widget 0.2.0 the payload is an object, <code>{ message?: string, attachments: [...] }</code>, not a string.<a class="cite" href="https://developer.tawk.to/product-updates/">tawk.to developer product updates</a></li>
+  <li><code>onChatEnded</code>: bring the bot back, optionally ask for a rating.</li>
+  <li><code>onStatusChange(status)</code> and <code>getStatus()</code>: when agents are <code>offline</code>, offer a ticket or email instead of an empty chat.</li>
+</ul>
+<p class="small muted">Most callbacks are “not supported in pop out chat window,” so avoid <code>popup()</code> for bot-coordinated flows.<a class="cite" href="https://developer.tawk.to/jsapi/">tawk.to JavaScript API reference</a></p>
+
+<h2>Do it: build the handoff against the simulator</h2>
+<p>The panel below is a simulator of the widget and its API (same names, limits and error codes). <code>SimServer.hashFor(id)</code> stands in for your Vercel identity route. Complete the TODOs, click <strong>Run</strong>, then use the simulator’s buttons to play the agent. The grader checks the five things a good handoff does.</p>
+
+<div id="sim" class="lab"></div>
+
+<div class="lab" id="editor">
+  <h3>Your escalateToHuman()</h3>
+  <textarea id="code" aria-label="Code editor" style="min-height:22rem"></textarea>
+  <div class="row">
+    <button type="button" id="run">Run</button>
+    <button type="button" class="secondary" id="grade">Grade</button>
+    <button type="button" class="quiet" id="reset-sim">Reset simulator</button>
+    <button type="button" class="quiet" id="solution">Show a reference solution</button>
+  </div>
+  <div class="result" id="grade-out" hidden></div>
+  <pre id="solution-pre" hidden data-lang="javascript"><code>async function escalateToHuman(summary, reason) {
+  const api = window.Tawk_API;
+  const userId = 'user-42';
+
+  // 1. Identity: the hash comes from your server, never computed in the browser.
+  const hash = await SimServer.hashFor(userId);
+  await new Promise((done) =&gt; api.login({ userId, hash, name: 'Andy', email: 'andy@example.com' },
+    (err) =&gt; { if (err) console.warn('login failed:', err); done(); }));
+
+  // 2. Context agents can filter and read.
+  api.setAttributes({ 'bot-last-reason': reason, 'bot-last-tier': 'fallback' }, (err) =&gt; err &amp;&amp; console.warn(err));
+  api.addTags(['bot-handoff'], (err) =&gt; err &amp;&amp; console.warn(err));
+  api.addEvent('bot-handoff', { reason }, (err) =&gt; err &amp;&amp; console.warn(err));
+
+  // 3. Draft the summary; the visitor presses Send.
+  api.setChatInputMessage(summary, (err) =&gt; err &amp;&amp; console.warn(err));
+
+  // 4. Open the human channel.
+  api.maximize();
+}
+
+window.Tawk_API.onAgentJoinChat = (agent) =&gt; console.log('human joined:', agent.name);
+window.Tawk_API.onChatEnded = () =&gt; console.log('chat ended: resume the bot UI');
+
+escalateToHuman('Visitor asked about a refund on an annual plan bought 20 days ago. Policy says 14 days. Needs a human decision.', 'policy-exception');</code></pre>
+</div>
+
+<h2>Check yourself</h2>
+<div class="quiz" id="quiz-l2" data-title="Check yourself: driving the widget">
+<script type="application/json">{"questions":[
+ {"q":"Where should calls to <code>Tawk_API</code> methods go?","options":["Inside onLoad, after the embed code","At the top of the page head","In a DOMContentLoaded listener before embed","Anywhere, the API queues calls automatically"],"answer":0,"explain":"Methods need the widget script loaded. The reference wraps every example in onLoad and the help centre calls early calls the most common mistake. Only visitor, customStyle and autoStart go before the script.","cite":"https://developer.tawk.to/jsapi/"},
+ {"q":"How is the secure-mode hash computed?","options":["Server-side HMAC-SHA256 of the visitor identifier","Client-side SHA-256 of the email address","Base64 of the email and key","A JWT signed by the property"],"answer":0,"explain":"HMAC-SHA256 keyed with the property's JavaScript API key, over the email (visitor/setAttributes) or the userId (login), hex-encoded, computed on your server so the key never reaches the browser.","cite":"https://developer.tawk.to/jsapi/"},
+ {"q":"How many custom attributes and tags can a chat carry?","options":["Fifty attributes and ten tags maximum","Ten attributes and fifty tags maximum","Unlimited attributes and twenty tags maximum","Twenty attributes and five tags maximum"],"answer":0,"explain":"ATTRIBUTE_LIMIT_EXCEEDED fires past 50 custom attributes (name, email and hash excluded); TAG_LIMIT_EXCEEDED past 10 tags.","cite":"https://developer.tawk.to/jsapi/"},
+ {"q":"What does <code>setChatInputMessage</code> do during a handoff?","options":["Drafts a message the visitor sends","Sends the summary to the agent","Stores a private note for agents","Replaces the chat's first system message"],"answer":0,"explain":"It pre-fills the input “ready for the visitor to review, edit, and send.” The visitor stays in control, and the agent gets a vetted summary as the first message.","cite":"https://developer.tawk.to/jsapi/"},
+ {"q":"Which callback tells you a human has actually joined?","options":["onAgentJoinChat with agent data","onChatStarted with visitor data","onStatusChange reporting online status","onChatMaximized with window type"],"answer":0,"explain":"onAgentJoinChat receives { name, position, image, id }. onChatStarted fires when the chat starts (no agent yet); onStatusChange is about page availability.","cite":"https://developer.tawk.to/jsapi/"}
+]}</script>
+</div>
+
+<h2>Recall cards</h2>
+<div class="recall" data-id="l2-after-onload"></div>
+<div class="recall" data-id="l2-secure-mode"></div>
+<div class="recall" data-id="l2-limits"></div>
+
+<div class="callout source">
+  <span class="label">Primary source to read</span>
+  <p>The <a href="https://developer.tawk.to/jsapi/">JavaScript API reference</a>, sections <em>login</em>, <em>setAttributes</em>, <em>setChatInputMessage</em> and <em>Secure Mode</em>. Then the help article <a href="https://help.tawk.to/article/how-to-generate-a-hash-for-javascript-api">How to generate a hash for the JavaScript API</a> to find the key in your own dashboard.</p>
+</div>
+
+<h2>Carry it into your project</h2>
+<ul class="checklist" id="l2-checklist">
+  <li><input type="checkbox" data-key="secure"><span>Secure Mode enabled; <code>TAWK_SITE_API_KEY</code> in Vercel (dev and prod); never in client code.</span></li>
+  <li><input type="checkbox" data-key="route"><span>An authenticated identity route returns <code>{ userId, hash }</code> for the signed-in user.</span></li>
+  <li><input type="checkbox" data-key="escalate"><span><code>escalateToHuman()</code> sets attributes, tags, an event, drafts a summary, and opens the widget; all callbacks log errors.</span></li>
+  <li><input type="checkbox" data-key="lifecycle"><span>Your UI reacts to <code>onChatStarted</code>, <code>onAgentJoinChat</code>, <code>onChatEnded</code>, <code>onStatusChange</code>.</span></li>
+  <li><input type="checkbox" data-key="offline"><span>When status is <code>offline</code>, the bot offers a ticket or email instead of an empty chat.</span></li>
+</ul>
+
+</main>
+<script src="../assets/course.js"></script>
+<script src="../assets/recall-bank.js"></script>
+<script src="../assets/quiz.js"></script>
+<script src="../assets/tawk-sim.js"></script>
+<script>
+(function () {
+  var STARTER = [
+    "// Complete the TODOs, then click Run. Use the simulator's buttons to play the agent.",
+    "async function escalateToHuman(summary, reason) {",
+    "  const api = window.Tawk_API;",
+    "  const userId = 'user-42';",
+    "",
+    "  // TODO 1 (identity): get the secure-mode hash from 'your server' and log the visitor in.",
+    "  //   const hash = await SimServer.hashFor(userId);",
+    "  //   api.login({ userId, hash, name: 'Andy', email: 'andy@example.com' }, (err) => ...)",
+    "",
+    "  // TODO 2 (context): api.setAttributes({ ... }), api.addTags([...]), api.addEvent('bot-handoff', { reason })",
+    "  //   remember: keys are letters, numbers and dashes; values are strings up to 255 chars.",
+    "",
+    "  // TODO 3 (summary): api.setChatInputMessage(summary, cb)",
+    "",
+    "  // TODO 4 (open): api.maximize()",
+    "}",
+    "",
+    "// Register the callbacks your UI needs BEFORE handing off:",
+    "window.Tawk_API.onAgentJoinChat = (agent) => console.log('human joined:', agent.name);",
+    "",
+    "escalateToHuman('Visitor asked about a refund on an annual plan bought 20 days ago. Policy says 14 days. Needs a human decision.', 'policy-exception');"
+  ].join('\n');
+
+  var sim; function boot() { sim = TawkSim.create(document.getElementById('sim'), { apiKey: 'sim-site-api-key', status: 'online' }); window.SimServer = { hashFor: function (id) { return TawkSim.hmacSha256Hex(sim.apiKey, id); } }; }
+  boot();
+  var code = document.getElementById('code'); code.value = STARTER;
+  var out = document.getElementById('grade-out');
+  document.getElementById('run').addEventListener('click', function () {
+    try { (0, eval)(code.value); sim.log('ok', 'your code ran; grading in 1.5 s…'); setTimeout(grade, 1500); }
+    catch (e) { out.hidden = false; out.className = 'result bad'; out.textContent = 'Your code threw: ' + e.message; }
+  });
+  function grade() {
+    var s = sim.state, checks = [
+      ['Identity: login verified with a server-made hash', !!s.user],
+      ['Context: at least one valid custom attribute', Object.keys(s.attributes).length > 0],
+      ['Context: tag "bot-handoff" present (≤ 10 tags)', s.tags.indexOf('bot-handoff') >= 0],
+      ['Timeline: event "bot-handoff" logged', s.events.some(function (e) { return e.name === 'bot-handoff'; })],
+      ['Summary drafted with setChatInputMessage (not sent)', s.draft.length > 20],
+      ['Widget opened (maximize or start with showWidget)', s.maximized],
+      ['Callback registered: onAgentJoinChat', typeof window.Tawk_API.onAgentJoinChat === 'function']
+    ];
+    var passed = checks.filter(function (c) { return c[1]; }).length;
+    out.hidden = false; out.className = 'result ' + (passed === checks.length ? 'ok' : 'warn');
+    out.innerHTML = '<b>' + passed + '/' + checks.length + '</b><ul>' + checks.map(function (c) { return '<li>' + (c[1] ? '✅' : '❌') + ' ' + c[0] + '</li>'; }).join('') + '</ul>' + (passed === checks.length ? 'Now click “Agent joins” and “Agent replies” in the simulator and watch your callback fire in the log.' : 'Fix the ❌ items and run again. The simulator log shows every call and error code.');
+  }
+  document.getElementById('grade').addEventListener('click', grade);
+  document.getElementById('reset-sim').addEventListener('click', function () { boot(); out.hidden = true; });
+  document.getElementById('solution').addEventListener('click', function () { var p = document.getElementById('solution-pre'); p.hidden = !p.hidden; });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 8 · Android: the same bot on a phone</title>
+<meta name="description" content="No tawk.to SDK exists; your bot's UI is yours and the human channel is a WebView away. Choose a shell, carry identity across devices, and keep the Vercel backend unchanged.">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<main class="lesson" data-verified="2026-10-17" data-ask="My web app is React on Vercel. Should the Android version be a Trusted Web Activity, Capacitor, or native Kotlin, given that the tawk.to handoff has to work on it?">
+
+<p class="kicker">Lesson 8 of 8 · Android</p>
+<h1>Android: the same bot on a phone</h1>
+<p class="subtitle">No SDK, no problem. Your bot’s UI is yours, the human channel is a WebView away, and the backend you built in lessons 3 to 6 does not change at all.</p>
+
+<div class="meta">
+  <span><b>Time</b> 30 minutes</span>
+  <span><b>Builds on</b> Lessons 2 and 6</span>
+  <span><b>Win</b> A shell decision plus the WebView chat screen that identifies the visitor and receives the handoff</span>
+</div>
+
+<div class="objectives">
+  <span class="label">By the end you can</span>
+  <ul>
+    <li>Choose between a Trusted Web Activity, Capacitor, and a native Kotlin app for your JavaScript stack.</li>
+    <li>Load the tawk.to widget in a WebView the way tawk.to’s own sample does, with the permissions it needs.</li>
+    <li>Carry one visitor identity across web and Android with <code>login()</code>.</li>
+    <li>Deliver the handoff summary and bridge widget callbacks back to native code.</li>
+  </ul>
+</div>
+
+<h2>Why this matters for your bot</h2>
+<p>“It should also run on an Android app” sounds like a port. It is mostly a packaging decision, because everything that matters (the pipeline, the guards, the webhooks) already lives behind your Vercel API, and tawk.to’s chat is a web page. What is new on a phone is the shell, permissions for file uploads, the app lifecycle, and making sure the person is the same person they were on the web.</p>
+
+<h2>What tawk.to offers on Android</h2>
+<p>There is no SDK: “A Mobile SDK is in our development roadmap and we hope to release it soon. However, using the Direct Chat Link, you can still give customers the ability to connect with you in a mobile app.” The article recommends a WebView and reminds you to “Make sure JavaScript is enabled in any WebView or in-app browser.”<a class="cite" href="https://help.tawk.to/article/how-to-add-the-tawkto-widget-to-your-mobile-application">tawk.to Help: adding the widget to your mobile application</a> tawk.to staff point developers to an official Kotlin sample that wraps the widget in a WebView; it is a sample app you copy from, not a library you depend on (two commits, September 2023; <code>minSdk 24</code>, <code>compileSdk 33</code>).<a class="cite" href="https://bitbucket.org/tawkto/widget-embed-android">tawk.to official Android sample (Bitbucket)</a> An iOS sibling using <code>WKWebView</code> appeared in December 2025.<a class="cite" href="https://bitbucket.org/tawkto/widget-embed-ios">tawk.to official iOS sample (Bitbucket)</a></p>
+
+<h2>Three shells for a JavaScript stack</h2>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Shell</th><th>What it is</th><th>Your bot UI</th><th>tawk.to handoff</th><th>Choose when</th></tr></thead>
+  <tbody>
+    <tr><td><strong>PWA + Trusted Web Activity</strong></td><td>Bubblewrap is “a Command Line Interface (CLI) that helps developers to create a Project for an Android application” that opens an existing PWA through a Trusted Web Activity; Node 18+; the README notes it is not officially backed by Google.<a class="cite" href="https://github.com/GoogleChromeLabs/bubblewrap">GoogleChromeLabs/bubblewrap</a></td><td>Your deployed web app, unchanged, rendered by Chrome</td><td>Exactly as on the web: the widget and <code>Tawk_API</code> work because it <em>is</em> Chrome</td><td>Your web app is already a good PWA and you need no native APIs</td></tr>
+    <tr><td><strong>Capacitor</strong></td><td>“Capacitor is a cross-platform native runtime that makes it easy to build performant mobile applications…”; “If it works in the browser, it probably works in a mobile app when using Capacitor.” Current docs are v8.<a class="cite" href="https://capacitorjs.com/docs">Capacitor docs</a></td><td>Your web app inside the app’s WebView, with plugins for native features</td><td>Widget inside the same WebView; callbacks work; file-upload permissions are your job</td><td>You want one codebase plus native capabilities (push, camera) and store distribution</td></tr>
+    <tr><td><strong>Native Kotlin</strong></td><td>Your own UI (Jetpack Compose or Views) calling the Vercel API over HTTPS</td><td>Native screens</td><td>A dedicated WebView screen built from tawk.to’s sample</td><td>You need the best native UX or already have an Android team</td></tr>
+  </tbody>
+</table>
+</div>
+<p>In all three, the Vercel API is the same one the web uses. If you find yourself writing Android-specific answer logic, stop: that logic belongs in <code>answer()</code>.</p>
+
+<h2>The WebView chat screen, from tawk.to’s sample</h2>
+<p>tawk.to’s Kotlin sample loads an HTML template that contains the normal embed snippet, enables the WebView features the widget needs, and bridges two callbacks back to Kotlin.<a class="cite" href="https://bitbucket.org/tawkto/widget-embed-android">tawk.to official Android sample (Bitbucket)</a> The essential lines:</p>
+<pre data-lang="kotlin" data-file="WidgetActivity.kt (from tawk.to’s sample)"><code>val webSettings = webView.settings
+webSettings.javaScriptEnabled = true
+webSettings.domStorageEnabled = true
+webSettings.databaseEnabled = true
+webSettings.allowFileAccess = true
+webView.webViewClient = WebViewClient()
+webView.webChromeClient = WidgetWebChromeClient(this)          // file chooser + permission prompts
+webView.addJavascriptInterface(WidgetJavascriptInterface(this), "WidgetJavascriptInterface")
+
+val widgetConfig = WidgetConfig(propertyId = "000000000000000000000001", widgetId = "default")
+val htmlData = WidgetHtmlParser(application).parse(widgetConfig = widgetConfig, customVariables = customVariables)
+
+// Base URL matters: the widget must think it is on the web, not on file://
+webView.loadDataWithBaseURL("https://embed.tawk.to/", htmlData, "text/html", "UTF-8", null)</code></pre>
+<p class="small muted">The iOS README makes the base-URL point explicit: “Using https://tawk.to as the base URL ensures the widget treats the environment as a valid web context (vs. file://).”<a class="cite" href="https://bitbucket.org/tawkto/widget-embed-ios">tawk.to official iOS sample (Bitbucket)</a> The sample’s manifest declares <code>INTERNET</code>, network state, storage/media and <code>WAKE_LOCK</code>, and requests <code>CAMERA</code> and media permissions at runtime so visitors can attach photos.</p>
+
+<p>Here is the template adapted for your handoff: identity via <code>login</code>, the drafted summary, and callbacks bridged to native. Placeholders in <code>${…}</code> are filled by your app before loading; the hash and summary come from your own API, never computed on the device.</p>
+<pre data-lang="html" data-file="assets/widget.html (template, adapted)"><code>&lt;!doctype html&gt;&lt;html&gt;&lt;head&gt;&lt;meta name="viewport" content="width=device-width, initial-scale=1"&gt;&lt;/head&gt;&lt;body&gt;
+&lt;script&gt;
+  var Tawk_API = Tawk_API || {}, Tawk_LoadStart = new Date();
+  Tawk_API.onLoad = function () {
+    // 1. Same identity as the web: userId + server-computed hash (lesson 2)
+    Tawk_API.login({ userId: '${user.id}', hash: '${user.hash}', name: '${user.name}', email: '${user.email}' }, function (err) {
+      if (err) WidgetJavascriptInterface.onError('login:' + err);
+    });
+    // 2. Context + the drafted summary from the bot (lesson 6)
+    Tawk_API.setAttributes({ 'bot-last-reason': '${handoff.reason}', 'platform': 'android' }, function () {});
+    Tawk_API.addTags(['bot-handoff', 'android'], function () {});
+    Tawk_API.setChatInputMessage('${handoff.summary}', function () {});
+    Tawk_API.maximize();
+  };
+  // 3. Bridge lifecycle back to Kotlin
+  Tawk_API.onChatMinimized = function () { WidgetJavascriptInterface.onChatMinimized(); };
+  Tawk_API.onChatEnded     = function () { WidgetJavascriptInterface.onChatEnded(); };
+  Tawk_API.onAgentJoinChat = function (a) { WidgetJavascriptInterface.onAgentJoined(a.name); };
+  Tawk_API.onStatusChange  = function (s) { WidgetJavascriptInterface.onStatus(s); };
+  (function () {
+    var s1 = document.createElement('script'), s0 = document.getElementsByTagName('script')[0];
+    s1.async = true; s1.src = 'https://embed.tawk.to/${propertyId}/${widgetId}'; s1.charset = 'UTF-8'; s1.setAttribute('crossorigin', '*');
+    s0.parentNode.insertBefore(s1, s0);
+  })();
+&lt;/script&gt;&lt;/body&gt;&lt;/html&gt;</code></pre>
+<p class="small muted">Escape the placeholder values for a JavaScript string (quotes, newlines) before substitution, exactly as you would for any template that becomes code. The sample’s <code>WidgetHtmlParser</code> does plain string replacement.</p>
+
+<h2>Identity across devices</h2>
+<p><code>login()</code> is the device-independent identity: “This function will login a user using hash and userId. This will retrieved the conversation of the user if it has existing before.”<a class="cite" href="https://developer.tawk.to/jsapi/">tawk.to JavaScript API reference</a> Your Android app calls the same identity route as the web (lesson 2), gets <code>{ userId, hash }</code>, and injects them into the template. The site API key stays on the server. A visitor who started on the website and opens the app sees their previous conversation; the agent sees one person, not two.</p>
+
+<h2>Lifecycle, status, offline</h2>
+<ul>
+  <li><strong>Connection lifecycle.</strong> The iOS sample calls <code>Tawk_API.shutdown()</code> when the screen disappears and <code>Tawk_API.start()</code> when it reappears.<a class="cite" href="https://bitbucket.org/tawkto/widget-embed-ios">tawk.to official iOS sample (Bitbucket)</a> Mirror that in <code>onPause</code>/<code>onResume</code> with <code>webView.evaluateJavascript(...)</code>, so a backgrounded app does not hold a live socket.</li>
+  <li><strong>Status before opening the screen.</strong> If <code>getStatus()</code> (or the bridged <code>onStatusChange</code>) says <code>offline</code>, show your ticket/email path instead; the Direct Chat Link article warns “Ensure your chat widget is online; otherwise, customers cannot start a chat.”<a class="cite" href="https://help.tawk.to/article/direct-chat-link">tawk.to Help: Direct Chat Link</a></li>
+  <li><strong>The simplest fallback.</strong> If you want nothing custom at all, open the Direct Chat Link <code>https://tawk.to/chat/{propertyId}/{widgetId}</code> in an in-app browser. It cannot be pre-filled: staff confirmed in April 2026 that query parameters are not supported and the link “will always open a new, empty session.”<a class="cite" href="https://community.tawk.to/t/direct-chat-link-subject-or-question-as-parameter/15906">tawk.to Community: Direct Chat Link parameters (staff reply)</a> That is why the WebView template above exists.</li>
+</ul>
+
+<h2>Do it</h2>
+<ol class="steps">
+  <li><strong>Choose the shell</strong> with the table. Write the choice under the architecture decision from lesson 1.</li>
+  <li><strong>Build the chat screen</strong>: copy the sample’s <code>WidgetActivity</code>, <code>WidgetWebChromeClient</code> and <code>WidgetJavascriptInterface</code>, replace <code>widget.html</code> with the template above, and add <code>onChatEnded</code>/<code>onAgentJoined</code>/<code>onStatus</code>/<code>onError</code> methods to the interface. (For Capacitor or a TWA, skip this: your web <code>escalateToHuman()</code> already does it.)</li>
+  <li><strong>Carry identity</strong>: call your identity route on app sign-in, store <code>{ userId, hash }</code> in memory, pass them to the template.</li>
+  <li><strong>Wire the handoff</strong>: when <code>answer()</code> returns <code>handoff: true</code>, open the chat screen with <code>reason</code> and the drafted <code>summary</code>.</li>
+  <li><strong>Test on an emulator</strong>: online status shown; agent sees the logged-in name in the dashboard; the summary is pre-filled; attaching a photo prompts for permission; minimizing returns to your UI; backgrounding and returning reconnects.</li>
+</ol>
+
+<h2>Check yourself</h2>
+<div class="quiz" id="quiz-l8" data-title="Check yourself: Android">
+<script type="application/json">{"questions":[
+ {"q":"Why does the Vercel backend not change for Android?","options":["The bot API is already platform-agnostic","Android apps cannot call HTTPS APIs","tawk.to proxies all mobile traffic","Capacitor rewrites the backend automatically"],"answer":0,"explain":"answer(), the guards and the webhooks sit behind HTTPS routes. Every shell (TWA, Capacitor, native) calls the same routes; only the UI and the chat screen are new."},
+ {"q":"Which WebView settings does tawk.to's sample enable?","options":["JavaScript, DOM storage, database, files","Geolocation, cookies, zoom, caching","Dark mode, fonts, safe browsing","Third-party cookies, mixed content, popups"],"answer":0,"explain":"javaScriptEnabled, domStorageEnabled, databaseEnabled and allowFileAccess, plus a WebChromeClient for file-chooser and permission prompts.","cite":"https://bitbucket.org/tawkto/widget-embed-android"},
+ {"q":"How do you carry the same visitor identity from web to Android?","options":["login with userId and server hash","Share the browser cookies with WebView","Pass the email in the URL","Reuse the Direct Chat Link parameters"],"answer":0,"explain":"login({ userId, hash }) restores the existing conversation; the hash is HMAC-SHA256 of the userId with the site API key, computed by your identity route.","cite":"https://developer.tawk.to/jsapi/"},
+ {"q":"Why keep Tawk_API callbacks bridged to native code?","options":["To close or resume screens on events","Because callbacks fail inside WebViews otherwise","tawk.to requires a native listener registered","Android blocks JavaScript timers in WebViews"],"answer":0,"explain":"The sample bridges onChatMinimized to finish() the Activity; you add onChatEnded, onAgentJoinChat and onStatusChange so your native UI reacts to the human channel.","cite":"https://bitbucket.org/tawkto/widget-embed-android"},
+ {"q":"What does the Direct Chat Link NOT support, per tawk.to staff?","options":["Query parameters that prefill questions","Opening in mobile device browsers","Placement inside email campaign links","Branding removal via custom domain"],"answer":0,"explain":"“The Direct Chat Link will always open a new, empty session.” Mobile use, email campaigns and white-label domains are all documented; pre-filling is not possible, which is why the WebView template drafts the summary itself.","cite":"https://community.tawk.to/t/direct-chat-link-subject-or-question-as-parameter/15906"}
+]}</script>
+</div>
+
+<h2>Recall cards</h2>
+<div class="recall" data-id="l8-webview"></div>
+<div class="recall" data-id="l8-identity-android"></div>
+<div class="recall" data-id="l8-same-backend"></div>
+
+<div class="callout source">
+  <span class="label">Primary sources to read</span>
+  <p>tawk.to’s <a href="https://help.tawk.to/article/how-to-add-the-tawkto-widget-to-your-mobile-application">mobile application article</a> (five minutes) and the <a href="https://bitbucket.org/tawkto/widget-embed-android">Android sample</a>: read <code>WidgetActivity.kt</code> and <code>widget.html</code> side by side. If you lean towards a web shell, the <a href="https://capacitorjs.com/docs">Capacitor docs</a> Android guide is the next stop.</p>
+</div>
+
+<h2>Carry it into your project</h2>
+<ul class="checklist" id="l8-checklist">
+  <li><input type="checkbox" data-key="shell"><span>Shell decided (TWA, Capacitor, native) and recorded with the lesson 1 decision.</span></li>
+  <li><input type="checkbox" data-key="screen"><span>Chat screen loads the widget with JavaScript, DOM storage, database and file access enabled, and a WebChromeClient for uploads.</span></li>
+  <li><input type="checkbox" data-key="identity"><span>App calls the identity route and logs the visitor in with <code>login()</code>.</span></li>
+  <li><input type="checkbox" data-key="handoff"><span>Handoff opens the chat screen with the drafted summary; callbacks bridged for minimize, end, agent joined, status.</span></li>
+  <li><input type="checkbox" data-key="lifecycle"><span><code>shutdown()</code>/<code>start()</code> on pause/resume; offline status routes to a ticket.</span></li>
+</ul>
+
+</main>
+<script src="../assets/course.js"></script>
+<script src="../assets/recall-bank.js"></script>
+<script src="../assets/quiz.js"></script>
+</body>
+</html>

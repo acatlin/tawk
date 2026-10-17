@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 7 · Graph RAG: when a graph beats chunks</title>
+<meta name="description" content="What Graph RAG is, what independent evaluations say about when it helps, what it costs, and a tiny TypeScript prototype you can reason about.">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<main class="lesson" data-verified="2026-10-17" data-ask="Here are five real questions my visitors asked that the FAQ and retrieval tiers got wrong. Are any of them multi-hop, and would a graph have helped?">
+
+<p class="kicker">Lesson 7 of 8 · The answer engine, extended</p>
+<h1>Graph RAG: when a graph beats chunks</h1>
+<p class="subtitle">A graph index pays for itself on relational and corpus-wide questions, and costs you dearly everywhere else. This lesson teaches you to tell which questions yours are.</p>
+
+<div class="meta">
+  <span><b>Time</b> 30 minutes</span>
+  <span><b>Builds on</b> Lesson 5 (approved sources)</span>
+  <span><b>Win</b> A written decision on whether your corpus needs a graph, and a prototype if it does</span>
+</div>
+
+<div class="objectives">
+  <span class="label">By the end you can</span>
+  <ul>
+    <li>Define Graph RAG in one sentence and name the two retrieval modes that matter (local and global).</li>
+    <li>Describe Microsoft GraphRAG’s indexing pipeline and say where the cost goes.</li>
+    <li>Quote three independent measurements about when graphs help and when they do not.</li>
+    <li>Prototype a k-hop graph retrieval in TypeScript and compare it with chunk retrieval on the same question.</li>
+  </ul>
+</div>
+
+<h2>Why this matters for your bot</h2>
+<p>Your corpus is small and curated, so you will probably not need a graph on day one. You asked to understand Graph RAG anyway, and that is the right instinct: the questions a FAQ and chunk retrieval get wrong tend to be <em>relational</em> (“I’m on the plan with the e-bike discount; which support line do I call?”) or <em>corpus-wide</em> (“what are the main reasons people contact you?”). Knowing what a graph buys you, and what it costs, lets you recognise those failures in your transcripts and respond proportionately instead of rebuilding your stack.</p>
+
+<h2>One sentence, two retrieval modes</h2>
+<p>Neo4j’s definition is the cleanest: “GraphRAG is RAG, where the Retrieval path includes a knowledge graph.”<a class="cite" href="https://neo4j.com/blog/genai/graphrag-manifesto/">The GraphRAG manifesto (Neo4j, vendor)</a> Instead of retrieving only text chunks that look like the question, you also retrieve <em>structure</em>: entities, the relationships between them, and summaries of the clusters they form.</p>
+
+<p>Microsoft’s GraphRAG, the reference implementation most people mean, offers several query modes. Two carry the idea:<a class="cite" href="https://microsoft.github.io/graphrag/query/overview/">Microsoft GraphRAG docs: query overview</a></p>
+<ul>
+  <li><strong>Local search</strong> combines “relevant data from the AI-extracted knowledge-graph with text chunks” and suits “questions that require an understanding of specific entities mentioned in the documents.” This is the multi-hop case.</li>
+  <li><strong>Global search</strong> runs “over all AI-generated community reports in a map-reduce fashion” for “questions that require an understanding of the dataset as a whole.” This is the sensemaking case.</li>
+</ul>
+<p class="small muted">The docs also list DRIFT search (local search refined with community information) and Basic search, “a rudimentary implementation of basic vector RAG” kept for comparison.<a class="cite" href="https://microsoft.github.io/graphrag/query/overview/">Microsoft GraphRAG docs: query overview</a></p>
+
+<h2>How the index is built, and where the cost goes</h2>
+<figure class="diagram full">
+<svg viewBox="0 0 900 190" role="img" aria-label="GraphRAG indexing pipeline: text units, extraction, Leiden communities, community reports, embeddings">
+  <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" class="arrowhead"/></marker></defs>
+  <rect class="node" x="10" y="50" width="150" height="64" rx="10"/><text x="85" y="76" text-anchor="middle" class="title">1 · TextUnits</text><text x="85" y="96" text-anchor="middle" class="small">chunks, default 1200 tokens</text>
+  <path class="edge" d="M160 82 L190 82"/>
+  <rect class="node warm" x="190" y="50" width="170" height="64" rx="10"/><text x="275" y="76" text-anchor="middle" class="title">2 · LLM extraction</text><text x="275" y="96" text-anchor="middle" class="small">entities, relationships, claims*</text>
+  <path class="edge" d="M360 82 L390 82"/>
+  <rect class="node" x="390" y="50" width="150" height="64" rx="10"/><text x="465" y="76" text-anchor="middle" class="title">3 · Communities</text><text x="465" y="96" text-anchor="middle" class="small">hierarchical Leiden</text>
+  <path class="edge" d="M540 82 L570 82"/>
+  <rect class="node warm" x="570" y="50" width="160" height="64" rx="10"/><text x="650" y="76" text-anchor="middle" class="title">4 · Reports</text><text x="650" y="96" text-anchor="middle" class="small">LLM summary per community</text>
+  <path class="edge" d="M730 82 L760 82"/>
+  <rect class="node" x="760" y="50" width="130" height="64" rx="10"/><text x="825" y="76" text-anchor="middle" class="title">5 · Embeddings</text><text x="825" y="96" text-anchor="middle" class="small">for local search</text>
+  <text x="275" y="150" text-anchor="middle" class="small">one LLM call per text unit, plus summarisation per entity and relationship</text>
+  <text x="650" y="150" text-anchor="middle" class="small">one LLM call per community, at every level of the hierarchy</text>
+  <text x="450" y="178" text-anchor="middle" class="small">* claim extraction is optional and off by default</text>
+</svg>
+<figcaption>Microsoft GraphRAG’s default dataflow: compose TextUnits (1200 tokens by default), extract entities, relationships and optional claims, cluster with the hierarchical Leiden algorithm, generate a report per community, then embed.<a class="cite" href="https://microsoft.github.io/graphrag/index/default_dataflow/">Microsoft GraphRAG docs: default dataflow</a> The warm boxes are where the LLM bill accumulates.</figcaption>
+</figure>
+
+<p>Microsoft says so plainly: the getting-started page warns “GraphRAG can consume a lot of LLM resources!” and suggests experimenting with inexpensive models first,<a class="cite" href="https://microsoft.github.io/graphrag/get_started/">Microsoft GraphRAG docs: get started</a> and the repository README states that indexing “can be an expensive operation” and that the project is “largely in maintenance mode.”<a class="cite" href="https://github.com/microsoft/graphrag">microsoft/graphrag repository</a> The same authors later published LazyGraphRAG, whose indexing cost they put at “0.1% of the costs of full GraphRAG.”<a class="cite" href="https://www.microsoft.com/en-us/research/blog/lazygraphrag-setting-a-new-standard-for-quality-and-cost/">LazyGraphRAG (Microsoft Research blog, vendor)</a></p>
+
+<h2>What independent measurements say</h2>
+<p>The original paper reports large wins for global “sensemaking” questions over corpora of about a million tokens: comprehensiveness win rates of 72–83% against vector RAG, and root-level community summaries needing “over 97% fewer tokens” than source text.<a class="cite" href="https://arxiv.org/abs/2404.16130">Edge et al., “From Local to Global” (arXiv 2404.16130)</a> That is the use case it was designed for. Three later evaluations, none vendor-run, draw the boundaries:</p>
+
+<table>
+  <thead><tr><th>Finding</th><th>Measurement</th><th>Source</th></tr></thead>
+  <tbody>
+    <tr><td>Single-hop facts: plain RAG holds its own</td><td>NQ F1: RAG 64.78 vs best GraphRAG variant 63.01</td><td><a href="https://arxiv.org/abs/2502.11371">arXiv 2502.11371</a></td></tr>
+    <tr><td>Multi-hop: graphs edge ahead</td><td>MultiHop-RAG accuracy 70.27 (HippoRAG2) vs 67.02 (RAG); temporal questions 53.34 (global) vs 30.70</td><td><a href="https://arxiv.org/abs/2502.11371">arXiv 2502.11371</a></td></tr>
+    <tr><td>Unanswerable questions: global search hallucinates</td><td>Null-query score 19.27 (global search) vs 96.01 (RAG)</td><td><a href="https://arxiv.org/abs/2502.11371">arXiv 2502.11371</a></td></tr>
+    <tr><td>Indexing time</td><td>135 s (RAG) vs 5,560 s and 7,702 s (two GraphRAG variants) on the same corpus</td><td><a href="https://arxiv.org/abs/2502.11371">arXiv 2502.11371</a></td></tr>
+    <tr><td>Gains concentrate in multi-hop</td><td>+0.47 average on general QA vs +27.23 across three multi-hop sets</td><td><a href="https://arxiv.org/abs/2604.09666">arXiv 2604.09666</a></td></tr>
+    <tr><td>Build cost and context size</td><td>GraphRAG build $13.19 per 1M tokens; ~22k context tokens per query</td><td><a href="https://arxiv.org/abs/2604.09666">arXiv 2604.09666</a></td></tr>
+    <tr><td>Prompt tokens per query</td><td>Vanilla RAG 879 vs MS-GraphRAG local ~38,700 vs global ~331,000 (novel corpus)</td><td><a href="https://arxiv.org/abs/2506.05690">GraphRAG-Bench (arXiv 2506.05690)</a></td></tr>
+    <tr><td>Verdict on simple retrieval</td><td>“basic RAG is comparable to or outperforms GraphRAG in simple fact retrieval tasks”; advantages “emerge clearly as questions grow more complex”</td><td><a href="https://arxiv.org/abs/2506.05690">GraphRAG-Bench (arXiv 2506.05690)</a></td></tr>
+  </tbody>
+</table>
+<p class="small muted">All three are arXiv preprints; peer-review status is not shown on their pages. Numbers are quoted from their tables, which occasionally disagree with their own prose; the table rows above use the tables. The systematic evaluation also found the two approaches complementary: on MultiHop-RAG, 13.6% of queries were answered only by GraphRAG and 11.6% only by RAG.<a class="cite" href="https://arxiv.org/abs/2502.11371">Han et al., “RAG vs. GraphRAG” (arXiv 2502.11371)</a></p>
+
+<div class="callout">
+  <span class="label">The rule that falls out</span>
+  <p>Chunks for facts. Graphs for relations and themes. And keep the honest “not in my sources” behaviour from lesson 5 regardless, because the global mode in particular is prone to answering questions that have no answer.</p>
+</div>
+
+<h2>Decide for your corpus</h2>
+<p>Write the decision down; it is a learning record for your project. Add a graph index only when at least one of these is true:</p>
+<ol>
+  <li><strong>Transcripts show multi-hop failures.</strong> Visitors ask questions that need two facts joined across pages, and the chunk tier retrieves one page but not the bridge. (Lesson 3’s webhook transcripts are where you will see this.)</li>
+  <li><strong>You need corpus-wide answers.</strong> “What are the main themes / most common issues / everything that changed this quarter.” That is global search territory.</li>
+  <li><strong>You need explainable paths or graph-level permissions.</strong> A traversal is inspectable in a way a cosine score is not; Neo4j’s manifesto argues this case at length (as a vendor).<a class="cite" href="https://neo4j.com/blog/genai/graphrag-manifesto/">The GraphRAG manifesto (Neo4j, vendor)</a></li>
+</ol>
+<p>If none is true, there is an even simpler option than retrieval for a corpus your size: Anthropic’s contextual retrieval write-up notes that when a knowledge base is “smaller than 200,000 tokens” (about 500 pages) you can put the whole thing in the prompt and rely on prompt caching.<a class="cite" href="https://www.anthropic.com/news/contextual-retrieval">Anthropic: Introducing Contextual Retrieval</a> Two help sites and a FAQ will often fit.</p>
+
+<h2>Prototype: a graph you can read in one sitting</h2>
+<p>A knowledge graph can be a list of triples with provenance. Retrieval is “find the entities named in the question, walk k hops, hand the walked triples to the model.” That is local search with the machinery removed, and it is enough to feel the difference. The tested module is <code>examples/src/graph-lite.ts</code>:</p>
+
+<pre data-lang="typescript" data-file="examples/src/graph-lite.ts (usage)"><code>import { GraphIndex, parseTriples } from "./graph-lite.js";
+
+const graph = new GraphIndex(parseTriples(`
+Annual Membership | includes | E-bike discount      | plans-page
+Annual Membership | includes | Priority phone line  | support-page
+Monthly Membership | includes | Email support       | support-page
+E-bike discount   | valid at | Riverside Station    | plans-page
+`));
+
+const question = "I'm on the plan with the e-bike discount; which support channel do I get?";
+const seeds = graph.findEntities(question);          // ["E-bike discount"]
+const hood  = graph.neighborhood(seeds, 2);          // 2 hops: discount → plan → support line
+console.log(GraphIndex.toContext(hood.triples));
+// - Annual Membership — includes — E-bike discount [plans-page]
+// - Annual Membership — includes — Priority phone line [support-page]
+// - E-bike discount — valid at — Riverside Station [plans-page]</code></pre>
+
+<p>Two design points carry over to any real system:</p>
+<ul>
+  <li><strong>Keep provenance on every triple.</strong> The <code>source</code> field is how you get back to a citable chunk, so graph context never breaks the citation rule from lesson 5.</li>
+  <li><strong>Extraction is the expensive, lossy step.</strong> In the systematic evaluation “only about 65.8% of answer entities appear in the constructed KG” for one benchmark.<a class="cite" href="https://arxiv.org/abs/2502.11371">Han et al., “RAG vs. GraphRAG” (arXiv 2502.11371)</a> If an entity was never extracted, no traversal will find it. Use a fixed schema (entity types, allowed predicates) when you ask Claude to extract triples; Anthropic publishes a cookbook on knowledge-graph construction with Claude.<a class="cite" href="https://platform.claude.com/cookbook/capabilities-knowledge-graph-guide">Claude cookbook: knowledge graph construction</a></li>
+</ul>
+
+<div id="graph-lab"></div>
+
+<h2>When you outgrow the prototype</h2>
+<table>
+  <thead><tr><th>Need</th><th>Reach for</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td>In-memory graph in JavaScript with communities</td><td><a href="https://graphology.github.io/">graphology</a> + <code>graphology-communities-louvain</code></td><td>MIT. Ships Louvain, not Leiden; fine for “summarise each cluster” experiments.<a class="cite" href="https://graphology.github.io/standard-library/communities-louvain.html">graphology communities-louvain docs</a></td></tr>
+    <tr><td>A real graph database from Node</td><td><a href="https://neo4j.com/docs/javascript-manual/current/">neo4j-driver</a> (<code>executeQuery</code>, <code>neo4j+s://</code> for Aura) or <a href="https://github.com/langchain-ai/langchainjs/tree/main/libs/providers/langchain-neo4j"><code>@langchain/neo4j</code></a></td><td>Vector, hybrid and Cypher retrievers; Neo4j’s pattern catalog at <a href="https://graphrag.com/">graphrag.com</a> lists 11 retriever patterns.<a class="cite" href="https://graphrag.com/reference/">GraphRAG pattern catalog (Neo4j)</a></td></tr>
+    <tr><td>Full community-summary pipeline</td><td><a href="https://github.com/microsoft/graphrag">microsoft/graphrag</a> (Python)</td><td>MIT, maintenance mode; budget the indexing run.<a class="cite" href="https://github.com/microsoft/graphrag">microsoft/graphrag repository</a></td></tr>
+    <tr><td>Lighter graph pipelines</td><td><a href="https://github.com/HKUDS/LightRAG">LightRAG</a>, <a href="https://github.com/gusye1234/nano-graphrag">nano-graphrag</a> (Python)</td><td>Both MIT. nano-graphrag is “about 1100 lines of code,” which makes it readable end to end.<a class="cite" href="https://github.com/gusye1234/nano-graphrag">nano-graphrag repository</a></td></tr>
+  </tbody>
+</table>
+<p class="small muted">A caution for a TypeScript shop: LlamaIndex’s <code>PropertyGraphIndex</code> is Python-only, and the LlamaIndex.TS repository was archived in April 2026 and marked deprecated.<a class="cite" href="https://github.com/run-llama/LlamaIndexTS">run-llama/LlamaIndexTS repository</a> Plan graph work in Node around graphology or Neo4j, or run a Python indexing job beside your Vercel app.</p>
+
+<h2>Check yourself</h2>
+<div class="quiz" id="quiz-l7" data-title="Check yourself: graphs vs chunks">
+<script type="application/json">{"questions":[
+ {"q":"On single-hop factual questions, what did the systematic evaluation (arXiv 2502.11371) find?","options":["Plain RAG matched or beat GraphRAG","GraphRAG doubled accuracy over plain RAG","Both failed on most such questions","GraphRAG won only with larger models"],"answer":0,"explain":"On Natural Questions, RAG scored 64.78 F1 against 63.01 for the best GraphRAG variant. Graphs earned their keep on multi-hop and temporal questions instead.","cite":"https://arxiv.org/abs/2502.11371"},
+ {"q":"Which question type is Microsoft GraphRAG’s Global Search designed for?","options":["Themes that span the entire corpus","Facts about one specific named entity","Exact quotes from a single page","Questions with a yes/no answer"],"answer":0,"explain":"Global search map-reduces over all community reports for “questions that require an understanding of the dataset as a whole.” Entity-specific questions are local search’s job.","cite":"https://microsoft.github.io/graphrag/query/overview/"},
+ {"q":"What happened on unanswerable (null) queries with GraphRAG global search in that evaluation?","options":["It hallucinated far more than RAG","It refused more reliably than RAG","It matched RAG almost exactly there","It was not tested on them"],"answer":0,"explain":"Global search scored 19.27 on null queries against 96.01 for RAG: summarising communities invites an answer even when none exists. Keep the NOT_IN_SOURCES rule.","cite":"https://arxiv.org/abs/2502.11371"},
+ {"q":"Microsoft’s indexing pipeline clusters the entity graph with which algorithm?","options":["Hierarchical Leiden community detection","K-means over node embeddings","Louvain modularity optimisation passes","PageRank with damping factor"],"answer":0,"explain":"The default dataflow generates “a hierarchy of entity communities using the Hierarchical Leiden Algorithm,” then writes a report per community. graphology, by contrast, ships Louvain.","cite":"https://microsoft.github.io/graphrag/index/default_dataflow/"},
+ {"q":"Your corpus is two help sites totalling 60k tokens. The evidence-based first move is:","options":["Vanilla retrieval, or whole corpus in prompt","Full GraphRAG with community summaries and reports","A Neo4j cluster with Text2Cypher retrieval enabled","LightRAG in mix mode across both sites"],"answer":0,"explain":"Below roughly 200k tokens Anthropic suggests skipping retrieval and caching the whole corpus; above that, chunk retrieval first. Add a graph only when transcripts show relational or corpus-wide failures.","cite":"https://www.anthropic.com/news/contextual-retrieval"}
+]}</script>
+</div>
+
+<h2>Recall cards</h2>
+<div class="recall" data-id="l7-definition"></div>
+<div class="recall" data-id="l7-when"></div>
+<div class="recall" data-id="l7-cost"></div>
+
+<div class="callout source">
+  <span class="label">Primary sources to read</span>
+  <p>Read the abstract and Section 5 of <a href="https://arxiv.org/abs/2404.16130">“From Local to Global”</a> to see what Graph RAG was built for, then the findings section of <a href="https://arxiv.org/abs/2506.05690">GraphRAG-Bench</a> to see where it stops helping. Together they take under an hour and replace most blog posts on the subject.</p>
+</div>
+
+<h2>Carry it into your project</h2>
+<ul class="checklist" id="l7-checklist">
+  <li><input type="checkbox" data-key="decision"><span>Decision recorded in your repo: graph now, graph later with a named trigger, or no graph. One paragraph with the evidence.</span></li>
+  <li><input type="checkbox" data-key="transcripts"><span>A saved search over transcripts for multi-hop phrasings (“the plan that…”, “which … do I get if…”).</span></li>
+  <li><input type="checkbox" data-key="schema"><span>If prototyping: a fixed extraction schema (entity types, allowed predicates) and provenance on every triple.</span></li>
+  <li><input type="checkbox" data-key="null"><span>The NOT_IN_SOURCES rule still applies to graph context.</span></li>
+</ul>
+
+</main>
+<script src="../assets/course.js"></script>
+<script src="../assets/recall-bank.js"></script>
+<script src="../assets/quiz.js"></script>
+<script src="../assets/graph-lab.js"></script>
+<script>
+GraphLab.mount(document.getElementById('graph-lab'), {
+  title: 'Lab: graph vs chunks on the Harbor corpus',
+  triples: [
+    'Annual Membership | includes | E-bike discount | plans-page',
+    'Annual Membership | includes | Priority phone line | support-page',
+    'Annual Membership | includes | Unlimited 45-minute rides | plans-page',
+    'Monthly Membership | includes | Unlimited 45-minute rides | plans-page',
+    'Monthly Membership | includes | Email support | support-page',
+    'Day Pass | includes | Free first 30 minutes | plans-page',
+    'Day Pass | includes | Chat support | support-page',
+    'Late fee | applies to | Day Pass | terms-pdf',
+    'Late fee | applies to | Monthly Membership | terms-pdf',
+    'Lost card fee | applies to | Monthly Membership | terms-pdf',
+    'Lost card fee | applies to | Annual Membership | terms-pdf',
+    '14-day refund | applies to | Annual Membership | terms-pdf',
+    'E-bike discount | valid at | Riverside Station | plans-page',
+    'E-bike discount | valid at | Old Town Station | plans-page',
+    'Riverside Station | has | E-bike dock | stations-page',
+    'Old Town Station | has | E-bike dock | stations-page',
+    'Priority phone line | hours | 7am-9pm | support-page',
+    'Email support | response time | 1 business day | support-page'
+  ].join('\n'),
+  chunks: [
+    { id: 'plans-1', text: 'Harbor offers three plans: Day Pass, Monthly Membership and Annual Membership. The Annual Membership includes unlimited 45-minute rides and an e-bike discount.' },
+    { id: 'plans-2', text: 'E-bike discount details: annual members save 20% on e-bike minutes. The e-bike discount applies automatically at checkout and cannot be combined with promo codes.' },
+    { id: 'support-1', text: 'Annual members use the priority phone line (7am-9pm); monthly members get email support within one business day; day pass riders can use chat support in the app.' },
+    { id: 'support-2', text: 'Which support channel should I use? For billing questions choose email support; for an urgent issue with a bike, call the support line; for general questions, chat support answers fastest.' },
+    { id: 'stations-1', text: 'Riverside Station and Old Town Station have e-bike docks. Other stations have classic bikes only.' },
+    { id: 'terms-1', text: 'Fees: a late fee of $0.25 per minute applies to Day Pass and Monthly Membership rides over the limit. A lost card fee of $10 applies to Monthly and Annual Memberships. Annual Memberships may be refunded within 14 days.' }
+  ],
+  questions: [
+    { q: "I'm on the plan with the e-bike discount; which support channel do I get?", entities: ['E-bike discount'], answer: 'Priority phone line', answerNeeds: ['e-bike discount', 'priority phone line'], note: 'Multi-hop: the discount names the plan, the plan names the channel. Watch how many chunks it takes before both facts are in context, and what the graph needs at 2 hops.' },
+    { q: 'Which stations have e-bike docks?', entities: ['E-bike dock'], answer: 'Riverside Station', note: 'Single fact: one chunk answers it, and one hop does too. No graph needed.' },
+    { q: 'Does the lost card fee apply to the plan that offers the 14-day refund?', entities: ['Lost card fee', '14-day refund'], answer: 'Annual Membership', note: 'Two seeds meeting at one node. Chunks also do fine here because the terms page keeps the facts together; the graph wins when facts live on different pages.' }
+  ]
+});
+</script>
+</body>
+</html>

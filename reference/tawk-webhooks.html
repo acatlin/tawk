@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reference · tawk.to webhooks</title>
+<meta name="description" content="Cheat sheet for tawk.to webhooks: the four events and their payload fields, HMAC-SHA1 verification over the raw body, retries, dashboard setup, and the Vercel handler.">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<main class="lesson" data-verified="2026-10-17" data-ask="Show me the exact transcript payload fields again and how to map sender.t to roles.">
+
+<p class="kicker">Reference sheet · lesson 3</p>
+<h1>tawk.to webhooks</h1>
+<p class="subtitle">Four events, one signature, one retry policy. Everything from the developer page, compressed.<a class="cite" href="https://developer.tawk.to/webhooks/">tawk.to webhooks reference</a></p>
+
+<h2>Events and fields</h2>
+<table>
+  <thead><tr><th>event</th><th>When</th><th>Payload</th></tr></thead>
+  <tbody>
+    <tr><td><code>chat:start</code></td><td>First message by visitor or agent (not whispers or trigger notifications)</td><td><code>chatId, time, domain, referrer, message{ text, type: msg|file|webrtc-call, sender{ type: agent|visitor|system } }, visitor{ name, email?, city, country }, property{ id, name }</code></td></tr>
+    <tr><td><code>chat:end</code></td><td>Chat ended</td><td><code>chatId, time, domain, referrer, visitor, property</code></td></tr>
+    <tr><td><code>chat:transcript_created</code></td><td>After all chats in a session ended + 3 minutes of inactivity</td><td><code>time, domain, referrer, chat{ id, visitor, messages[{ sender{ t: a|v|s, n?, id? }, type, msg?, time, attchs?[{ type, content.file{ url, name, mimeType, size, extension } }] }] }, property</code></td></tr>
+    <tr><td><code>ticket:create</code></td><td>New ticket</td><td><code>time, property, requester{ name, email, type? }, ticket{ id, humanId, subject, message }</code></td></tr>
+  </tbody>
+</table>
+<p class="small muted"><code>sender.t</code>: <code>a</code> agent, <code>v</code> visitor, <code>s</code> system. No per-message event exists. Custom attributes and tags are not in any payload.</p>
+
+<h2>Signature</h2>
+<ul>
+  <li>Header <code>X-Tawk-Signature</code> = HMAC-SHA1(secret, raw body), hex.</li>
+  <li>Verify the raw bytes (<code>await request.text()</code>) before <code>JSON.parse</code>; compare with <code>crypto.timingSafeEqual</code> after a length check.</li>
+</ul>
+<pre data-lang="typescript"><code>import { createHmac, timingSafeEqual } from "node:crypto";
+const expected = Buffer.from(createHmac("sha1", secret).update(rawBody).digest("hex"), "hex");
+const given = Buffer.from(header ?? "", "hex");
+const ok = given.length === expected.length &amp;&amp; given.length &gt; 0 &amp;&amp; timingSafeEqual(given, expected);</code></pre>
+
+<h2>Retries</h2>
+<ul>
+  <li>Non-2XX, or no response within 30 s → retried for up to 12 hours.</li>
+  <li><code>X-Hook-Event-Id</code> is constant across retries → idempotency key in a shared store.</li>
+  <li>Return 2XX for events you ignore. Respond first; slow work after (<code>waitUntil</code> from <code>@vercel/functions</code>, or a queue).</li>
+</ul>
+
+<h2>Dashboard</h2>
+<p>Administration → Settings → Webhooks → Create Webhook: name, HTTPS endpoint URL, events. Up to 10 webhooks per property. Enable/disable, edit, delete from the list.<a class="cite" href="https://help.tawk.to/article/creating-and-managing-webhooks">tawk.to Help: creating and managing webhooks</a></p>
+
+<h2>Vercel handler (examples/api/tawk-webhook.ts)</h2>
+<pre data-lang="typescript"><code>export async function POST(request: Request) {
+  const rawBody = await request.text();
+  const result = await handleTawkWebhook(
+    { rawBody, signature: request.headers.get("x-tawk-signature"), eventId: request.headers.get("x-hook-event-id") },
+    { secret: process.env.TAWK_WEBHOOK_SECRET ?? "", store },
+  );
+  return new Response(result.body, { status: result.status });
+}</code></pre>
+<p>Order inside <code>handleTawkWebhook</code>: secret present → verify (401) → parse (400) → dedupe (200 duplicate) → store → side effects → <code>200 ok &lt;event&gt;</code>.</p>
+
+<h2>Test from your machine</h2>
+<pre data-lang="bash"><code>cd examples
+npx tsx scripts/send-test-webhook.ts https://your-app.vercel.app/api/tawk-webhook "$TAWK_WEBHOOK_SECRET" chat:transcript_created --id t1
+npx tsx scripts/send-test-webhook.ts https://your-app.vercel.app/api/tawk-webhook "$TAWK_WEBHOOK_SECRET" chat:start --tamper</code></pre>
+
+</main>
+<script src="../assets/course.js"></script>
+</body>
+</html>

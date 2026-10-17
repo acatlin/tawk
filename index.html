@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tawk.to for your Claude chatbot</title>
+<meta name="description" content="Eight short lessons on integrating tawk.to with a Claude-powered chatbot on Vercel: the real developer surface, handoff, webhooks, FAQ-first answers, approved-source retrieval, Graph RAG, and Android.">
+<link rel="stylesheet" href="assets/course.css">
+</head>
+<body>
+<main class="page" data-no-footer>
+
+<p class="kicker">A teaching workspace · built 2026-10-17</p>
+<h1>tawk.to for your Claude chatbot</h1>
+<p class="subtitle">Eight short lessons, each with one tangible win, for a developer shipping a first chatbot integration: tawk.to as the human channel, Claude on Vercel as the brain, answers from a FAQ first and from one or two approved sources only, on the web and on Android.</p>
+
+<div class="callout">
+  <span class="label">How this course works</span>
+  <p>Read a lesson (20–30 minutes), do the lab, take the quiz from memory, then come back in a few days for the <a href="lessons/review.html">spaced review</a>. Every claim links to the page it was verified against. The code you see is tested: <code>cd examples &amp;&amp; npm install &amp;&amp; npm test</code>. The agent that built the course is your tutor: open a terminal in this folder, run <code>claude</code>, and ask.</p>
+</div>
+
+<h2>The premise</h2>
+<p>tawk.to does not let an outside system post messages into its chat widget, and its staff have said so repeatedly (lesson 1 has the citations). So the course teaches the pattern that survives that fact: <strong>your bot is the front door; tawk.to is the human channel.</strong> Lessons 2 and 3 build the bridge to tawk.to in both directions, lessons 4 to 6 build the answer engine, lesson 7 explains when a graph index would help, and lesson 8 takes it to Android.</p>
+
+<h2>Lessons</h2>
+<ol class="lesson-list" id="lesson-list"></ol>
+
+<h2>Reference sheets</h2>
+<ul>
+  <li><a href="reference/tawk-javascript-api.html">tawk.to JavaScript API</a>: settings, methods, callbacks, limits, secure mode.</li>
+  <li><a href="reference/tawk-webhooks.html">tawk.to webhooks</a>: events, payload fields, signature, retries, handler.</li>
+  <li><a href="reference/answer-pipeline.html">Answer pipeline</a>: flow, shapes, reason codes, handoff policy, grounding prompt.</li>
+  <li><a href="reference/retrieval-and-graph-rag.html">Retrieval &amp; Graph RAG</a>: citations, domain rules, caching, decision table.</li>
+  <li><a href="reference/glossary.html">Glossary</a>: the course’s canonical vocabulary.</li>
+</ul>
+
+<h2>The companion code</h2>
+<p>The <code>examples/</code> folder is a small TypeScript package with the modules the lessons quote and a test suite that pins their behaviour: FAQ matching, the allow-list guard, grounded answers with Claude citations, the pipeline, secure-mode hashing, webhook verification, and the graph prototype. Two scripts send a grounded question to Claude and a signed test webhook to any URL.</p>
+
+<h2>Workspace files</h2>
+<p><code>MISSION.md</code> (why), <code>RESOURCES.md</code> (trusted sources and communities), <code>GLOSSARY.md</code>, <code>NOTES.md</code> (teaching notes), <code>learning-records/</code> (what has been established so far). They steer future sessions; read them before asking for lesson nine.</p>
+
+</main>
+<script src="assets/course.js"></script>
+<script>
+(function () {
+  var C = window.Course, list = document.getElementById('lesson-list');
+  C.COURSE.lessons.forEach(function (l, i) {
+    var q = C.store.get('quiz:' + l.file);
+    var li = document.createElement('li');
+    var num = document.createElement('span'); num.className = 'num'; num.textContent = String(i + 1).padStart(2, '0');
+    var wrap = document.createElement('div');
+    var a = document.createElement('a'); a.href = 'lessons/' + l.file; a.textContent = l.title;
+    var win = document.createElement('span'); win.className = 'win'; win.textContent = 'Win: ' + l.win;
+    wrap.appendChild(a); wrap.appendChild(win);
+    var st = document.createElement('span'); st.className = 'status' + (q ? ' done' : ''); st.textContent = q ? ('quiz ' + q.score + '/' + q.total) : 'not started';
+    li.appendChild(num); li.appendChild(wrap); li.appendChild(st); list.appendChild(li);
+  });
+  var li = document.createElement('li');
+  li.innerHTML = '<span class="num">↻</span><div><a href="lessons/review.html">Spaced review</a><span class="win">All recall cards, due-first, interleaved across lessons</span></div><span class="status"></span>';
+  list.appendChild(li);
+})();
+</script>
+</body>
+</html>

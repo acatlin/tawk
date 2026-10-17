@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 1 · The map: what tawk.to can and cannot do</title>
+<meta name="description" content="tawk.to's real developer surface, the one door it keeps shut, and the three integration patterns that leaves for a Claude-powered chatbot.">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<main class="lesson" data-verified="2026-10-17" data-ask="Given that my bot can't reply inside the tawk.to widget, which pattern fits my project, and what would make me switch?">
+
+<p class="kicker">Lesson 1 of 8 · Orientation</p>
+<h1>The map: what tawk.to can and cannot do for your bot</h1>
+<p class="subtitle">Before you write a line of integration code, know the doors tawk.to opens, the one it keeps shut, and which pattern that leaves you.</p>
+
+<div class="meta">
+  <span><b>Time</b> 20 minutes</span>
+  <span><b>Builds on</b> nothing: this is the start</span>
+  <span><b>Win</b> A one-paragraph architecture decision you can defend with citations</span>
+</div>
+
+<div class="objectives">
+  <span class="label">By the end you can</span>
+  <ul>
+    <li>Name tawk.to’s public developer surfaces and say what each is for.</li>
+    <li>State, with sources, the one thing your bot cannot do, and why it shapes everything else.</li>
+    <li>Choose between the three integration patterns for your project and write the decision down.</li>
+  </ul>
+</div>
+
+<h2>Why this matters for your bot</h2>
+<p>First, a small correction that saves searches: the product is <strong>tawk.to</strong>; <code>tawk.io</code> is just a redirect to it.<a class="cite" href="https://www.tawk.to/">tawk.to home</a> Second, a bigger one. Most “integrate a chatbot with live chat” projects fail in week three because someone assumed the chat platform would let the bot talk inside its widget. With tawk.to that assumption is wrong, and it has been wrong, in writing, for two years. This lesson gives you the map so you design around that fact on day one instead of discovering it in production.</p>
+
+<h2>What tawk.to is</h2>
+<p>tawk.to is a free live-chat widget plus an agent dashboard, ticketing, a hosted Knowledge Base, and a paid AI add-on called <strong>AI Assist</strong> (its bot persona is “Apollo”).<a class="cite" href="https://www.tawk.to/products/automation/">tawk.to Automation product page</a> The company’s own framing is “Four things we charge for. Everything else is free”: AI Assist, branding removal, video and voice, and hired agents.<a class="cite" href="https://www.tawk.to/add-ons/">tawk.to add-ons</a> The chat widget was rebuilt as version 4.0 in September 2026 and is currently at 4.3.0.<a class="cite" href="https://developer.tawk.to/product-updates/">tawk.to developer product updates</a></p>
+
+<h2>The developer surface, honestly inventoried</h2>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Surface</th><th>What it does</th><th>Direction</th><th>Cost</th></tr></thead>
+  <tbody>
+    <tr><td><strong>JavaScript API</strong> (<code>window.Tawk_API</code>)<a class="cite" href="https://developer.tawk.to/jsapi/">tawk.to JavaScript API reference</a></td><td>Open, hide, style the widget; identify the visitor (secure mode, <code>login</code>); attach attributes, tags, events; pre-fill the input box; listen to chat lifecycle callbacks</td><td>Browser → widget</td><td>Free</td></tr>
+    <tr><td><strong>Webhooks</strong><a class="cite" href="https://developer.tawk.to/webhooks/">tawk.to webhooks reference</a></td><td>Signed POSTs for exactly four events: <code>chat:start</code>, <code>chat:end</code>, <code>chat:transcript_created</code>, <code>ticket:create</code></td><td>tawk.to → your server</td><td>Free</td></tr>
+    <tr><td><strong>Direct Chat Link</strong><a class="cite" href="https://help.tawk.to/article/direct-chat-link">tawk.to Help: Direct Chat Link</a></td><td><code>https://tawk.to/chat/{propertyId}/{widgetId}</code>, a standalone chat page; no query parameters to pre-fill anything</td><td>Link out</td><td>Free</td></tr>
+    <tr><td><strong>Official wrappers</strong><a class="cite" href="https://github.com/tawk/tawk-messenger-react">tawk-messenger-react (GitHub)</a></td><td>npm packages for React, Vue 2/3, Angular, Ember that load the same widget and expose the same API</td><td>Browser</td><td>Free</td></tr>
+    <tr><td><strong>REST API</strong><a class="cite" href="https://help.tawk.to/article/rest-api">tawk.to Help: REST API</a></td><td>By-request beta: properties, members, lists of chats and tickets, statistics, webhooks, Knowledge Base articles, widgets. HTTP Basic, RPC-style POSTs at <code>https://api.tawk.to/v1/</code></td><td>Your server → tawk.to (management)</td><td>Application form</td></tr>
+    <tr><td><strong>Zapier / Make</strong><a class="cite" href="https://zapier.com/apps/tawk-to/integrations">Zapier: tawk.to integrations</a></td><td>The same four events as triggers; no actions that send messages</td><td>tawk.to → automations</td><td>Free tier exists</td></tr>
+    <tr><td><strong>AI Assist custom tools</strong><a class="cite" href="https://help.tawk.to/article/how-to-set-up-a-custom-api-integration-with-apollo-ai">tawk.to Help: custom API integration</a></td><td>Give tawk.to’s AI agent an OpenAPI 3.0 endpoint or an MCP server to call during a conversation; “API responses take priority over other data sources”</td><td>tawk.to → your API</td><td>Growth plan and up ($29/mo)</td></tr>
+    <tr><td><strong>Mobile</strong><a class="cite" href="https://help.tawk.to/article/how-to-add-the-tawkto-widget-to-your-mobile-application">tawk.to Help: widget in a mobile app</a></td><td>No SDK (“A Mobile SDK is in our development roadmap”). Official samples wrap the widget in a WebView: Kotlin for Android, WKWebView for iOS</td><td>App → widget</td><td>Free</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2>The closed door</h2>
+<p>There is <strong>no way for your server to post a message into a tawk.to chat</strong>. Not through the JavaScript API (its newest member, <code>setChatInputMessage</code>, only pre-fills the visitor’s input box “ready for the visitor to review, edit, and send”),<a class="cite" href="https://developer.tawk.to/jsapi/">tawk.to JavaScript API reference</a> not through webhooks (outbound only), not through the gated REST API (its capability list has no messaging item),<a class="cite" href="https://help.tawk.to/article/rest-api">tawk.to Help: REST API</a> and not through Zapier or Make (triggers only).</p>
+
+<p>tawk.to staff have said so repeatedly on the official community forum (community posts, staff accounts):</p>
+<ul>
+  <li>March 2024: “Unfortunately, this feature is not currently available.”<a class="cite" href="https://community.tawk.to/t/post-message-to-vidget-by-api/3097">tawk.to Community: post message to widget by API (staff reply)</a></li>
+  <li>January 2025: “tawk.to does not offer a way to push ChatGPT responses into the Chat Widget via our REST API.” (same thread)</li>
+  <li>June 2025: “Our APIs do not currently support real-time message exchanges or programmatic replies through the chat widget.”<a class="cite" href="https://community.tawk.to/t/how-to-automatically-respond-to-tawk-to-chat-messages-via-n8n-webhook/13280">tawk.to Community: auto-respond via n8n (staff reply)</a></li>
+  <li>October 2026: a request to add message-posting methods to the JavaScript API was logged as a suggestion with no ETA.<a class="cite" href="https://community.tawk.to/t/add-methods-to-post-messages-attachments-in-js-api/17059">tawk.to Community: add methods to post messages (staff reply)</a></li>
+</ul>
+
+<div class="callout warn">
+  <span class="label">The consequence</span>
+  <p>A bot you build cannot speak inside the tawk.to widget. Either <em>your bot has its own chat surface</em> and tawk.to handles the humans, or <em>tawk.to’s AI speaks</em> and your backend is one of its tools. There is no third option today, and designing as if there were is the week-three failure.</p>
+</div>
+
+<h2>The three patterns</h2>
+<div class="grid-3">
+  <div class="card pick">
+    <span class="tag">Pattern A · recommended for this course</span>
+    <h3>Your bot is the front door; tawk.to is the human channel</h3>
+    <p>Your UI (web and Android) talks to your Vercel API: FAQ first, then approved sources, then an honest fallback. When a human is needed, you open the tawk.to widget with the visitor identified and the context attached, so the agent never asks “what was this about?”. Webhooks bring transcripts back for FAQ mining.</p>
+  </div>
+  <div class="card">
+    <span class="tag">Pattern B · the official “bring your backend”</span>
+    <h3>AI Assist is the front door; your API is its tool</h3>
+    <p>tawk.to’s AI answers inside the widget from its data sources (FAQs, Knowledge Base, sitemap-scoped pages) and, on paid plans, calls your OpenAPI or MCP endpoint for live answers. One surface, native escalation, but grounding is enforced by prompt wording and your retrieval sits behind their model.</p>
+  </div>
+  <div class="card">
+    <span class="tag">Pattern C · no bot</span>
+    <h3>Humans plus the deterministic layer</h3>
+    <p>Knowledge Base cards in the widget, up to 20 keyword triggers, shortcuts for agents. Worth knowing as the baseline you are improving on, and as the fallback when budgets vanish.</p>
+  </div>
+</div>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Your requirement</th><th>Pattern A (your bot + tawk.to humans)</th><th>Pattern B (AI Assist + your API tool)</th></tr></thead>
+  <tbody>
+    <tr><td>FAQ answers first</td><td>Your deterministic tier, verbatim, free (lesson 4)</td><td>Shortcuts with “AI Questions” and “Send exactly as written”, still routed through AI Assist and billed in credits<a class="cite" href="https://help.tawk.to/article/understanding-ai-assist%E2%80%99s-data-sources">tawk.to Help: AI Assist data sources</a></td></tr>
+    <tr><td>Only one or two sources</td><td>Enforced by construction and by an allow-list guard (lesson 5)</td><td>Sitemap-scoped crawl plus Instructions text such as “Only use information found in the provided data sources”; no strict-grounding switch is documented<a class="cite" href="https://help.tawk.to/article/using-base-prompt-to-restrict-ai-assist-replies">tawk.to Help: restricting AI Assist replies</a></td></tr>
+    <tr><td>Claude generates the answers</td><td>Yes, with citations</td><td>Only behind your tool endpoint; AI Assist composes the final reply (model chosen in its dashboard)</td></tr>
+    <tr><td>Human handoff</td><td>Open the widget with identity, tags, attributes, a drafted summary (lesson 2)</td><td>Native: escalation shortcuts, “When a human agent joins the chat, your AI agent leaves the chat automatically”; paid plans<a class="cite" href="https://help.tawk.to/article/how-to-train-apollo-ai-to-transfer-chats-to-human-agents">tawk.to Help: transferring to human agents</a></td></tr>
+    <tr><td>Android</td><td>Your app UI, with the tawk.to widget in a WebView for handoff (lesson 8)</td><td>The widget in a WebView, AI inside it</td></tr>
+    <tr><td>Running cost</td><td>Claude tokens + Vercel; tawk.to free</td><td>AI Assist credits (“Auto costs 3 credits per reply”; Growth $29/month for 1,000 credits and API tools)<a class="cite" href="https://help.tawk.to/article/how-to-manage-billing-for-ai-assist">tawk.to Help: AI Assist billing</a></td></tr>
+    <tr><td>Learning from transcripts</td><td colspan="2">Both: the transcript webhook fires after a session ends (lesson 3)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="lab" id="chooser">
+  <h3>Pattern chooser</h3>
+  <p class="hint">Answer for <em>your</em> project. The recommendation is derived from the facts above, not from preference.</p>
+  <div id="chooser-qs"></div>
+  <div class="result" id="chooser-out"></div>
+</div>
+
+<h2>Do it</h2>
+<ol class="steps">
+  <li><strong>Find your IDs.</strong> In the tawk.to dashboard: Administration → Overview shows the Property ID; Channels → Chat Widget shows the Widget ID and the Direct Chat Link, which contains both.<a class="cite" href="https://help.tawk.to/article/where-can-i-find-the-property-and-widget-id">tawk.to Help: property and widget ID</a> The default widget’s ID is literally <code>default</code>.</li>
+  <li><strong>Write the decision</strong> into your repo’s README, three sentences: the pattern, the reason (quote the closed door), and the trigger that would make you reconsider (for example, tawk.to shipping a message-posting API).</li>
+  <li><strong>Bookmark</strong> the two developer pages below; every later lesson cites them.</li>
+</ol>
+
+<h2>Check yourself</h2>
+<div class="quiz" id="quiz-l1" data-title="Check yourself: the map">
+<script type="application/json">{"questions":[
+ {"q":"Which of these can a third-party server do with tawk.to today?","options":["Receive signed webhooks for events","Post replies into live chats","Stream visitor messages over websockets","Send messages via Zapier actions"],"answer":0,"explain":"Webhooks are the server-side channel: four events, HMAC-SHA1 signed. Nothing lets an outside system post into a chat; Zapier and Make expose triggers only.","cite":"https://developer.tawk.to/webhooks/"},
+ {"q":"What does <code>Tawk_API.setChatInputMessage</code> actually do?","options":["Pre-fills the visitor's input box only","Sends a message as the agent","Sends a message as the visitor","Posts a system note to agents"],"answer":0,"explain":"It drafts text “ready for the visitor to review, edit, and send.” Nothing is sent until the visitor presses Send, which is exactly why it is useful for handoff summaries.","cite":"https://developer.tawk.to/jsapi/"},
+ {"q":"Which statement about the tawk.to REST API is accurate?","options":["Access is by request; no messaging endpoints","It is public and includes messaging endpoints","It is deprecated in favour of webhooks","It only manages Knowledge Base articles today"],"answer":0,"explain":"You apply through a form, authenticate with HTTP Basic, and get management endpoints (properties, lists, stats, webhooks, KB, widgets). Messaging is absent from the capability list.","cite":"https://help.tawk.to/article/rest-api"},
+ {"q":"In Pattern B, which direction does the custom API integration run?","options":["tawk.to calls your endpoint as a tool","Your endpoint posts replies into the chat","Both sides exchange chat messages over websockets","Zapier relays chat messages in both directions"],"answer":0,"explain":"AI Assist calls your OpenAPI 3.0 or MCP server during a conversation and uses the response; “API responses take priority over other data sources.” Your server never originates a message.","cite":"https://help.tawk.to/article/how-to-set-up-a-custom-api-integration-with-apollo-ai"},
+ {"q":"What is tawk.to's official route for chat inside an Android app?","options":["A WebView loading the widget page","The official Android SDK on Maven","A Flutter plugin maintained by tawk.to","A React Native bridge from tawk.to"],"answer":0,"explain":"There is no SDK yet. tawk.to publishes a Kotlin sample that loads the widget in a WebView and recommends the Direct Chat Link for apps.","cite":"https://help.tawk.to/article/how-to-add-the-tawkto-widget-to-your-mobile-application"}
+]}</script>
+</div>
+
+<h2>Recall cards</h2>
+<div class="recall" data-id="l1-closed-door"></div>
+<div class="recall" data-id="l1-surfaces"></div>
+<div class="recall" data-id="l1-patterns"></div>
+
+<div class="callout source">
+  <span class="label">Primary sources to read</span>
+  <p>Skim the whole <a href="https://developer.tawk.to/jsapi/">JavaScript API reference</a> once (it is one page) and the <a href="https://developer.tawk.to/webhooks/">webhooks page</a>. Then read tawk.to’s short <a href="https://help.tawk.to/article/an-introduction-to-integrations-in-tawkto">introduction to integrations</a>, which states the two official integration paths in their own words.</p>
+</div>
+
+<h2>Carry it into your project</h2>
+<ul class="checklist" id="l1-checklist">
+  <li><input type="checkbox" data-key="ids"><span>Property ID and Widget ID copied into your Vercel environment as <code>TAWK_PROPERTY_ID</code> and <code>TAWK_WIDGET_ID</code>.</span></li>
+  <li><input type="checkbox" data-key="decision"><span>Architecture decision (pattern, reason, reconsider-trigger) written in the README.</span></li>
+  <li><input type="checkbox" data-key="bookmarks"><span>Developer pages bookmarked; community “Developers” category noted for questions.</span></li>
+</ul>
+
+</main>
+<script src="../assets/course.js"></script>
+<script src="../assets/recall-bank.js"></script>
+<script src="../assets/quiz.js"></script>
+<script>
+(function () {
+  var QS = [
+    { id: 'claude', q: 'Must Claude (your model, your prompts) generate the visitor-facing answers?' },
+    { id: 'inside', q: 'Must the whole experience happen inside the tawk.to widget (one surface, no custom chat UI)?' },
+    { id: 'strict', q: 'Must source restriction be enforced by code rather than by prompt wording?' },
+    { id: 'budget', q: 'Is an AI Assist Growth plan ($29/month) acceptable in the budget?' },
+    { id: 'twoui', q: 'Is a handoff that opens a second chat surface (the tawk.to widget) acceptable?' }
+  ];
+  var box = document.getElementById('chooser-qs'), out = document.getElementById('chooser-out'), answers = {};
+  QS.forEach(function (q) {
+    var row = document.createElement('div'); row.className = 'row';
+    var label = document.createElement('span'); label.style.flex = '1'; label.style.minWidth = '16rem'; label.textContent = q.q; row.appendChild(label);
+    ['yes', 'no'].forEach(function (v) {
+      var b = document.createElement('button'); b.type = 'button'; b.className = 'quiet'; b.textContent = v;
+      b.addEventListener('click', function () { answers[q.id] = v === 'yes'; row.querySelectorAll('button').forEach(function (x) { x.className = 'quiet'; }); b.className = 'secondary'; render(); });
+      row.appendChild(b);
+    });
+    box.appendChild(row);
+  });
+  function render() {
+    var done = QS.every(function (q) { return q.id in answers; });
+    if (!done) { out.className = 'result'; out.textContent = 'Answer all five to see the recommendation.'; return; }
+    var a = answers, rec, why = [];
+    if (a.claude && a.inside) {
+      rec = 'Conflict: not possible today.';
+      why.push('Your bot cannot reply inside the widget (staff statements 2024–2026). Either relax “inside the widget” (→ Pattern A) or accept that AI Assist composes the final reply while your Claude-powered endpoint supplies the facts as a tool (→ Pattern B, Growth plan).');
+    } else if (a.claude && !a.inside) {
+      rec = 'Pattern A: your bot is the front door; tawk.to is the human channel.';
+      why.push('Claude answers with citations under your control; tawk.to handles humans and transcripts.');
+      if (!a.twoui) why.push('You said a second surface is not acceptable: Pattern A needs one for handoff. Reconsider that, or you are back at Pattern B.');
+      if (a.strict) why.push('Code-enforced scope is only available in A: AI Assist documents prompt-based restriction, not a strict switch.');
+    } else if (!a.claude && a.inside) {
+      rec = a.budget ? 'Pattern B: AI Assist is the front door; your API is its tool.' : 'Pattern B on the free Hobby tier (no tools, no escalation), or Pattern C.';
+      why.push('One surface, native escalation on paid plans. Scope is enforced by Instructions text and sitemap-scoped crawling.');
+      if (a.strict) why.push('Warning: you asked for code-enforced scope; B cannot give you that. If it is a hard requirement, choose A.');
+      if (!a.budget) why.push('Custom API/MCP tools and escalation need Growth or above.');
+    } else {
+      rec = 'Pattern A, unless budget forces Pattern C.';
+      why.push('Without the one-surface constraint, owning the bot keeps Claude, citations and scope enforcement in your hands; tawk.to stays free.');
+    }
+    out.className = 'result ok';
+    out.innerHTML = '<b>' + rec + '</b><ul>' + why.map(function (w) { return '<li>' + w + '</li>'; }).join('') + '</ul>';
+  }
+  render();
+})();
+</script>
+</body>
+</html>

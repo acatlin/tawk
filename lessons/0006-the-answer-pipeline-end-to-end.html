@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 6 · The answer pipeline end to end</title>
+<meta name="description" content="Wire FAQ, approved-source retrieval, fallback and human handoff into one function with a policy you can defend, then compare it honestly with tawk.to's native AI Assist.">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<main class="lesson" data-verified="2026-10-17" data-ask="Here is my handoff policy draft. Which triggers are too eager, which are missing, and what should the first message to the agent contain?">
+
+<p class="kicker">Lesson 6 of 8 · The answer engine, assembled</p>
+<h1>The answer pipeline end to end</h1>
+<p class="subtitle">One function, four tiers, and a handoff policy you can explain to the person who pays for it. Then an honest comparison with tawk.to’s native AI.</p>
+
+<div class="meta">
+  <span><b>Time</b> 30 minutes</span>
+  <span><b>Builds on</b> Lessons 2, 4, 5</span>
+  <span><b>Win</b> <code>answer()</code> wired into a Vercel route and into the handoff, plus a written comparison with AI Assist</span>
+</div>
+
+<div class="objectives">
+  <span class="label">By the end you can</span>
+  <ul>
+    <li>Order the tiers and justify each boundary in one sentence.</li>
+    <li>Write a handoff policy: when to hand off, what travels with the visitor, what happens when agents are offline.</li>
+    <li>Wire <code>answer()</code> into <code>api/answer.ts</code> and into <code>escalateToHuman()</code>.</li>
+    <li>Compare your pipeline with tawk.to AI Assist on the mission’s requirements, using tawk.to’s own numbers.</li>
+  </ul>
+</div>
+
+<h2>Why this matters for your bot</h2>
+<p>Visitors never experience a retriever or a matcher. They experience a <em>policy</em>: how quickly they got a right answer, whether the bot admitted ignorance, and how painless the handoff was. This lesson assembles the pieces into that policy and makes every decision observable, so next month you tune numbers instead of arguing about anecdotes.</p>
+
+<h2>The pipeline</h2>
+<figure class="diagram full">
+<svg viewBox="0 0 900 300" role="img" aria-label="Answer pipeline: human requested, FAQ, approved sources with Claude citations, fallback, handoff to tawk.to, transcripts back to FAQ mining">
+  <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" class="arrowhead"/></marker></defs>
+  <rect class="node" x="10" y="40" width="110" height="50" rx="9"/><text x="65" y="60" text-anchor="middle">question</text><text x="65" y="76" text-anchor="middle" class="small">from your UI</text>
+  <path class="edge" d="M120 65 L150 65"/>
+  <rect class="node warm" x="150" y="40" width="120" height="50" rx="9"/><text x="210" y="60" text-anchor="middle" class="title">tier 0</text><text x="210" y="76" text-anchor="middle" class="small">asked for a person?</text>
+  <path class="edge" d="M270 65 L300 65"/>
+  <rect class="node accent" x="300" y="40" width="120" height="50" rx="9"/><text x="360" y="60" text-anchor="middle" class="title">tier 1 · FAQ</text><text x="360" y="76" text-anchor="middle" class="small">threshold + margin</text>
+  <path class="edge" d="M420 65 L450 65"/>
+  <rect class="node accent" x="450" y="30" width="170" height="70" rx="9"/><text x="535" y="52" text-anchor="middle" class="title">tier 2 · sources</text><text x="535" y="68" text-anchor="middle" class="small">retrieve → allow-list filter</text><text x="535" y="84" text-anchor="middle" class="small">→ Claude with citations</text>
+  <path class="edge" d="M620 65 L650 65"/>
+  <rect class="node" x="650" y="40" width="110" height="50" rx="9"/><text x="705" y="60" text-anchor="middle">grounded?</text><text x="705" y="76" text-anchor="middle" class="small">text + citations</text>
+  <path class="edge" d="M760 55 L790 55"/>
+  <rect class="node accent" x="790" y="30" width="100" height="40" rx="9"/><text x="840" y="55" text-anchor="middle" class="title">answer</text>
+  <path class="edge" d="M705 90 L705 140"/>
+  <rect class="node warm" x="640" y="140" width="130" height="50" rx="9"/><text x="705" y="160" text-anchor="middle" class="title">tier 3 · fallback</text><text x="705" y="176" text-anchor="middle" class="small">“not in my sources”</text>
+  <path class="edge" d="M640 165 L470 165"/>
+  <rect class="node warm" x="330" y="140" width="140" height="50" rx="9"/><text x="400" y="160" text-anchor="middle" class="title">handoff</text><text x="400" y="176" text-anchor="middle" class="small">escalateToHuman()</text>
+  <path class="edge" d="M330 165 L200 165"/>
+  <rect class="node muted" x="80" y="140" width="120" height="50" rx="9"/><text x="140" y="160" text-anchor="middle">tawk.to widget</text><text x="140" y="176" text-anchor="middle" class="small">human agent</text>
+  <path class="edge dashed" d="M140 190 L140 240 L400 240"/>
+  <rect class="node muted" x="400" y="215" width="170" height="50" rx="9"/><text x="485" y="235" text-anchor="middle">transcript webhook</text><text x="485" y="251" text-anchor="middle" class="small">chat:transcript_created</text>
+  <path class="edge dashed" d="M570 240 L800 240 L800 190"/>
+  <rect class="node muted" x="740" y="215" width="150" height="50" rx="9"/><text x="815" y="235" text-anchor="middle">FAQ mining</text><text x="815" y="251" text-anchor="middle" class="small">new variants weekly</text>
+  <path class="edge dashed" d="M210 90 L210 115 L400 115 L400 140"/>
+  <text x="305" y="110" text-anchor="middle" class="small">yes → straight to handoff</text>
+</svg>
+<figcaption>Solid arrows are one request. Dashed arrows are the feedback loop that makes next month’s FAQ better than this month’s.</figcaption>
+</figure>
+
+<p>Each boundary has a one-sentence justification:</p>
+<ul>
+  <li><strong>Tier 0 before everything:</strong> a visitor who asks for a person should not have to argue with a bot; the check is a phrase list and costs nothing.</li>
+  <li><strong>FAQ before the model:</strong> deterministic, verbatim, free, auditable (lesson 4).</li>
+  <li><strong>Allow-list filter before the model:</strong> defence in depth; the index should already be clean, and this makes a leak a test failure instead of an incident (lesson 5).</li>
+  <li><strong>Grounded or nothing:</strong> a model answer without an allowed citation is treated as a fallback, because a confident uncited answer is indistinguishable from a hallucination.</li>
+  <li><strong>Fallback is a handoff offer, not a dead end.</strong></li>
+</ul>
+
+<h2>The code is shorter than the diagram</h2>
+<pre data-lang="typescript" data-file="examples/src/pipeline.ts (answer)"><code>export async function answer(question: string, deps: PipelineDeps): Promise&lt;Answer&gt; {
+  const allow = normalizeAllowList(deps.allowedSources);
+  const minCitations = deps.minCitations ?? 1;
+
+  if (wantsHuman(question, deps.handoffPhrases))
+    return { tier: "fallback", text: "Of course. Connecting you with a person now.", citations: [], confidence: 1, handoff: true, reason: "visitor-requested-human" };
+
+  const faq = matchFaq(deps.faq, question, deps.faqOptions);
+  if (faq.hit)
+    return { tier: "faq", text: faq.entry.answer, citations: [{ title: "FAQ", url: faq.entry.source }], confidence: faq.score, handoff: false, reason: `faq:${faq.entry.id}` };
+
+  const retrieved = filterToAllowed(await deps.retrieve(question), allow);
+  if (retrieved.length === 0)
+    return { tier: "fallback", text: fallbackText, citations: [], confidence: 0, handoff: true, reason: "no-approved-chunks" };
+
+  const gen = await deps.generate(question, retrieved);
+  const citations = filterToAllowed(gen.citations, allow);
+  if (!gen.grounded || citations.length &lt; minCitations)
+    return { tier: "fallback", text: fallbackText, citations: [], confidence: 0, handoff: true, reason: gen.grounded ? "insufficient-citations" : "model-declined" };
+
+  return { tier: "sources", text: gen.text, citations, confidence: 1, handoff: false, reason: "grounded" };
+}</code></pre>
+<p>Every return carries a <code>reason</code>. That string is your analytics schema: count reasons per week and you know whether to add FAQ variants (<code>no-approved-chunks</code> on questions you can answer), fix the crawl (<code>model-declined</code> on questions the pages do answer), or celebrate (<code>grounded</code> climbing).</p>
+
+<pre data-lang="typescript" data-file="api/answer.ts (Vercel Function, sketch)"><code>import { answer } from "../src/pipeline.js";
+import { groundedAnswer } from "../src/grounded-answer.js";
+import { FAQ } from "../data/faq.js";
+import { retrieveChunks } from "../src/retrieve.js";      // your index from lesson 5
+
+export async function POST(request: Request): Promise&lt;Response&gt; {
+  const { question, sessionId } = await request.json();
+  const started = Date.now();
+  const a = await answer(question, {
+    faq: FAQ,
+    faqOptions: { strategy: "tfidf", threshold: 0.45, margin: 0.1 },   // from your lab run
+    allowedSources: (process.env.ALLOWED_SOURCES ?? "").split(","),
+    retrieve: retrieveChunks,
+    generate: groundedAnswer,
+  });
+  console.log(JSON.stringify({ sessionId, tier: a.tier, reason: a.reason, citations: a.citations.length, ms: Date.now() - started }));
+  return Response.json(a);
+}</code></pre>
+
+<h2>The handoff policy</h2>
+<table>
+  <thead><tr><th>Trigger</th><th>Action in your UI</th><th>What travels with the visitor (lesson 2)</th></tr></thead>
+  <tbody>
+    <tr><td><code>handoff: true</code> with <code>visitor-requested-human</code></td><td>Open the widget immediately</td><td rowspan="3"><code>login(userId, hash)</code> for identity; attributes <code>bot-last-tier</code>, <code>bot-last-reason</code>; tag <code>bot-handoff</code>; event <code>bot-handoff</code>; a drafted summary that ends with a session reference (so the transcript can be joined later)</td></tr>
+    <tr><td><code>handoff: true</code> with any other reason</td><td>Show the fallback text and a “Talk to a person” button; open the widget on click, or automatically after a second fallback in the same session</td></tr>
+    <tr><td>Escalation vocabulary (complaint, dispute, legal, cancel, chargeback)</td><td>Answer if you can, but always show the button</td></tr>
+    <tr><td>FAQ hit with a score within 0.05 of the threshold</td><td>Answer, and add “Did that help?” with a path to a person</td><td>Nothing yet; log it as a near-miss for the weekly review</td></tr>
+    <tr><td><code>Tawk_API.getStatus()</code> is <code>offline</code></td><td>Do not open an empty chat. Offer a ticket or email</td><td>tawk.to turns offline-form messages into tickets with a reply by email<a class="cite" href="https://help.tawk.to/article/responding-to-offline-messages-via-ticketing">tawk.to Help: responding to offline messages via ticketing</a></td></tr>
+  </tbody>
+</table>
+
+<h2>How this compares with tawk.to AI Assist</h2>
+<p>Pattern B (lesson 1) uses tawk.to’s own AI inside the widget. It is a real option and sometimes the right one, so here is the comparison on your requirements, with tawk.to’s own documentation as the source for its side.</p>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Requirement</th><th>Your pipeline (Pattern A)</th><th>AI Assist (Pattern B)</th></tr></thead>
+  <tbody>
+    <tr><td>FAQ answered first, verbatim</td><td>Tier 1, free, deterministic, test-set tuned</td><td>FAQ data source (question ≤ 255 chars, answer ≤ 1,000) and Shortcuts with “AI Questions” set to “Send exactly as written”; still routed through the model and billed in credits<a class="cite" href="https://help.tawk.to/article/understanding-ai-assist%E2%80%99s-data-sources">tawk.to Help: understanding AI Assist’s data sources</a></td></tr>
+    <tr><td>Only one or two sources</td><td>Enforced by construction and by <code>isAllowedUrl()</code> three times</td><td>Restrict the crawl with an XML sitemap (“AI Assist will begin crawling the URLs listed in your sitemap”) and add Instructions such as “Only use information found in the provided data sources.” No strict-grounding switch or confidence threshold is documented<a class="cite" href="https://help.tawk.to/article/how-to-control-ai-assist%E2%80%99s-data-ingestion-using-an-xml-sitemap">tawk.to Help: controlling ingestion with an XML sitemap</a><a class="cite" href="https://help.tawk.to/article/using-base-prompt-to-restrict-ai-assist-replies">tawk.to Help: restricting AI Assist replies</a></td></tr>
+    <tr><td>Retrieval</td><td>Your retriever, your top-k, your chunking</td><td>“AI Assist looks at your data sources and selects up to 5 chunks of information according to the context of each inquiry”<a class="cite" href="https://help.tawk.to/article/understanding-ai-assist%E2%80%99s-data-sources">tawk.to Help: understanding AI Assist’s data sources</a></td></tr>
+    <tr><td>Citations</td><td>Per sentence, from the API, verifiable</td><td>Product page says “Cites real sources”; no help article documents citation output; the preview shows which snippets were used<a class="cite" href="https://www.tawk.to/products/automation/">tawk.to Automation product page</a></td></tr>
+    <tr><td>Unknown questions</td><td><code>NOT_IN_SOURCES</code> sentinel → fallback → handoff</td><td>Paid plans: Escalation “When no response can be found from your data” bound to a shortcut; free plan relies on Instructions text<a class="cite" href="https://help.tawk.to/article/using-base-prompt-instructions-for-escalation">tawk.to Help: instructions for escalation</a></td></tr>
+    <tr><td>Human handoff</td><td>Your policy above, widget opened with context</td><td>Native and smooth: “When a human agent joins the chat, your AI agent leaves the chat automatically”; paid plans<a class="cite" href="https://help.tawk.to/article/how-to-train-apollo-ai-to-transfer-chats-to-human-agents">tawk.to Help: transferring to human agents</a></td></tr>
+    <tr><td>Cost</td><td>Claude tokens (cached system prompt) + Vercel</td><td>“Auto costs 3 credits per reply”; Growth is $29/month for 1,000 credits (about 333 replies), top-ups $30 per 1,000 credits; Hobby is free with 100 credits<a class="cite" href="https://help.tawk.to/article/how-to-manage-billing-for-ai-assist">tawk.to Help: AI Assist billing</a></td></tr>
+    <tr><td>Your backend in the loop</td><td>Everything</td><td>Custom tools: an OpenAPI 3.0 endpoint or MCP server, Growth plan and up; “API responses take priority over other data sources”<a class="cite" href="https://help.tawk.to/article/how-to-set-up-a-custom-api-integration-with-apollo-ai">tawk.to Help: custom API integration</a></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout info">
+  <span class="label">The hybrid worth knowing</span>
+  <p>Expose <code>answer()</code> behind an OpenAPI 3.0 schema with an <code>x-api-key</code> header. Then, if anyone on your team ever turns on AI Assist, point it at that tool: the same FAQ, the same approved sources, the same guards feed both surfaces. tawk.to’s note that “Each API request is independent” means your endpoint must be stateless per question, which <code>answer()</code> already is.<a class="cite" href="https://help.tawk.to/article/how-to-set-up-a-custom-api-integration-with-apollo-ai">tawk.to Help: custom API integration</a></p>
+</div>
+
+<h2>Lab: trace a question through the tiers</h2>
+<div class="lab" id="trace-lab">
+  <h3>Pipeline tracer</h3>
+  <p class="hint">Same decision logic as <code>pipeline.ts</code>. Type a question, choose what the (simulated) retrieval and model return, and read the path.</p>
+  <div class="row"><input type="text" id="tr-q" placeholder="e.g. which support line do annual members get?" style="flex:1;min-width:18rem" aria-label="Question"></div>
+  <div class="row">
+    <label>retrieval finds approved chunks <select id="tr-chunks"><option value="yes">yes</option><option value="no">no</option></select></label>
+    <label>model answers from them <select id="tr-grounded"><option value="yes">yes, with citations</option><option value="uncited">yes, but no citations</option><option value="no">says NOT_IN_SOURCES</option></select></label>
+    <label>agents <select id="tr-status"><option value="online">online</option><option value="offline">offline</option></select></label>
+    <button type="button" id="tr-run">Trace</button>
+  </div>
+  <div class="result" id="tr-out" hidden></div>
+</div>
+
+<h2>Check yourself</h2>
+<div class="quiz" id="quiz-l6" data-title="Check yourself: the pipeline">
+<script type="application/json">{"questions":[
+ {"q":"Why does the “I want a human” check run before the FAQ tier?","options":["Visitors should never argue with bots","FAQ matching is slower than regex","tawk.to requires it for webhook delivery","Claude refuses requests mentioning human agents"],"answer":0,"explain":"An explicit request for a person is the one input where any automated answer is wrong. A phrase list costs nothing, so it goes first."},
+ {"q":"A model answer comes back with text but zero allowed citations. The pipeline…","options":["falls back and offers a human","returns the text, flagging low confidence","retries the model with more chunks","asks the FAQ tier once more"],"answer":0,"explain":"Grounded-or-nothing: a confident uncited answer is indistinguishable from a hallucination, so it is treated as a fallback with reason insufficient-citations."},
+ {"q":"In the pipeline, where is the allow-list applied?","options":["Before the model and on citations","Only when building the search index","Only on the final rendered answer","Inside Claude via the system prompt"],"answer":0,"explain":"Retrieved chunks are filtered before generation, and the model's citations are filtered again before display; the index build is the third place (lesson 5)."},
+ {"q":"AI Assist retrieves how much per inquiry, per tawk.to’s docs?","options":["Up to five chunks per inquiry","The entire knowledge base each time","One best matching article each inquiry","Everything under the crawled sitemap pages"],"answer":0,"explain":"“AI Assist looks at your data sources and selects up to 5 chunks of information according to the context of each inquiry,” then generates a reply according to your Instructions.","cite":"https://help.tawk.to/article/understanding-ai-assist%E2%80%99s-data-sources"},
+ {"q":"What does tawk.to document for keeping AI Assist inside your sources?","options":["Instructions wording plus a sitemap-scoped crawl","A strict grounding toggle per agent","A confidence threshold in the dashboard","Automatic refusal outside the Knowledge Base"],"answer":0,"explain":"Scope is prompt-based (“Only use information found in the provided data sources”) and crawl-based (an XML sitemap chooses the pages). No strict switch or threshold appears in the docs.","cite":"https://help.tawk.to/article/using-base-prompt-to-restrict-ai-assist-replies"}
+]}</script>
+</div>
+
+<h2>Recall cards</h2>
+<div class="recall" data-id="l6-order"></div>
+<div class="recall" data-id="l6-handoff-policy"></div>
+<div class="recall" data-id="l6-native-vs-custom"></div>
+
+<div class="callout source">
+  <span class="label">Primary sources to read</span>
+  <p>Read <a href="https://help.tawk.to/article/understanding-ai-assist%E2%80%99s-data-sources">Understanding AI Assist’s data sources</a> and <a href="https://help.tawk.to/article/using-base-prompt-to-restrict-ai-assist-replies">Using Instructions to restrict AI Assist replies</a>: twenty minutes, and you will know exactly what the native option can and cannot promise. Then re-read your own <code>pipeline.test.ts</code>; the tests are the policy written down.</p>
+</div>
+
+<h2>Carry it into your project</h2>
+<ul class="checklist" id="l6-checklist">
+  <li><input type="checkbox" data-key="route"><span><code>api/answer.ts</code> deployed; every response logs tier, reason, citation count, latency.</span></li>
+  <li><input type="checkbox" data-key="ui"><span>UI calls <code>escalateToHuman()</code> on <code>handoff: true</code> per the policy table, with the session reference in the drafted summary.</span></li>
+  <li><input type="checkbox" data-key="offline"><span>Offline status produces a ticket or email path, never an empty chat.</span></li>
+  <li><input type="checkbox" data-key="review"><span>A weekly review reads reasons: no-approved-chunks → FAQ/variants; model-declined → source gaps; handoff rate trend.</span></li>
+  <li><input type="checkbox" data-key="comparison"><span>Comparison with AI Assist written down, with the reconsider-trigger from lesson 1.</span></li>
+</ul>
+
+</main>
+<script src="../assets/course.js"></script>
+<script src="../assets/recall-bank.js"></script>
+<script src="../assets/quiz.js"></script>
+<script src="../assets/faq-lab.js"></script>
+<script>
+(function () {
+  var FAQ = [
+    { id: 'reset-password', questions: ['How do I reset my password?', 'I forgot my password', "I can't log in to my account"], answer: 'Use “Forgot password” on the sign-in screen. The reset link expires after 30 minutes.', source: 'https://help.harbor.example/account/password' },
+    { id: 'lost-card', questions: ['I lost my membership card', 'My card is missing', 'How do I replace a lost card?'], answer: 'Report it in the app under Membership → Card. A replacement costs $10 and ships in 3–5 days.', source: 'https://help.harbor.example/membership/card' },
+    { id: 'refund', questions: ['Can I get a refund?', 'What is the refund policy?', 'Cancel my membership and get my money back'], answer: 'Annual memberships are refundable within 14 days of purchase. Day passes are not refundable.', source: 'https://help.harbor.example/billing/refunds' },
+    { id: 'hours', questions: ['What are the station hours?', 'When can I rent a bike?'], answer: 'Stations are open 24/7. The support line runs 7am–9pm.', source: 'https://help.harbor.example/riding/hours' },
+    { id: 'ebike', questions: ['Do you have e-bikes?', 'Where are the electric bikes?'], answer: 'E-bikes dock at Riverside and Old Town stations. Annual members get a 20% e-bike discount.', source: 'https://help.harbor.example/riding/ebikes' }
+  ];
+  var HUMAN = ['talk to a human', 'talk to a person', 'speak to someone', 'real person', 'live agent', 'human agent', 'customer service rep'];
+  var out = document.getElementById('tr-out');
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  document.getElementById('tr-run').addEventListener('click', function () {
+    var q = document.getElementById('tr-q').value.trim(); if (!q) return;
+    var chunks = document.getElementById('tr-chunks').value, grounded = document.getElementById('tr-grounded').value, status = document.getElementById('tr-status').value;
+    var steps = [], result;
+    if (HUMAN.some(function (p) { return q.toLowerCase().indexOf(p) >= 0; })) { steps.push('tier 0: visitor asked for a person → short-circuit'); result = { tier: 'fallback', reason: 'visitor-requested-human', handoff: true, text: 'Of course. Connecting you with a person now.' }; }
+    else {
+      var d = FaqLab.decide(FaqLab.rank(FAQ, q, 'tfidf'), 0.45, 0.1);
+      steps.push('tier 1: FAQ ' + (d.hit ? 'HIT (' + d.id + ') → answer verbatim' : 'fall-through (' + d.reason + ')'));
+      if (d.hit) { var e = FAQ.filter(function (f) { return f.id === d.id; })[0]; result = { tier: 'faq', reason: 'faq:' + d.id, handoff: false, text: e.answer, citation: e.source }; }
+      else if (chunks === 'no') { steps.push('tier 2: retrieval found no approved chunks'); result = { tier: 'fallback', reason: 'no-approved-chunks', handoff: true, text: 'I can only answer from our official help pages, and I could not find this there. I can connect you with a person who can help.' }; }
+      else {
+        steps.push('tier 2: approved chunks → Claude with citations enabled');
+        if (grounded === 'yes') result = { tier: 'sources', reason: 'grounded', handoff: false, text: '(model answer with ≥1 allowed citation)' };
+        else if (grounded === 'uncited') { steps.push('tier 2: text came back with no allowed citation → treated as fallback'); result = { tier: 'fallback', reason: 'insufficient-citations', handoff: true, text: '(fallback text)' }; }
+        else { steps.push('tier 2: model replied NOT_IN_SOURCES'); result = { tier: 'fallback', reason: 'model-declined', handoff: true, text: '(fallback text)' }; }
+      }
+    }
+    var ui;
+    if (!result.handoff) ui = 'UI shows the answer' + (result.citation ? ' with its source link' : ' with citations') + '. No handoff.';
+    else if (status === 'offline') ui = 'Agents are offline (Tawk_API.getStatus() = "offline"): UI offers a ticket/email path instead of opening an empty chat.';
+    else if (result.reason === 'visitor-requested-human') ui = 'UI calls escalateToHuman(summary, "' + result.reason + '") immediately: login + attributes + tag + event + drafted summary + maximize.';
+    else ui = 'UI shows the fallback text and a “Talk to a person” button (auto-open on the second fallback in this session); on click → escalateToHuman(summary, "' + result.reason + '").';
+    out.hidden = false; out.className = 'result ' + (result.handoff ? 'warn' : 'ok');
+    out.innerHTML = '<ol>' + steps.map(function (s) { return '<li>' + esc(s) + '</li>'; }).join('') + '</ol><div><b>Answer</b>: <code>' + esc(JSON.stringify({ tier: result.tier, reason: result.reason, handoff: result.handoff })) + '</code></div><div class="muted" style="margin-top:.3rem">' + esc(result.text) + '</div><div style="margin-top:.5rem"><b>Then</b>: ' + esc(ui) + '</div>';
+  });
+})();
+</script>
+</body>
+</html>

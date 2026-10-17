@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 4 · FAQ-first: the deterministic tier</title>
+<meta name="description" content="Design a curated FAQ tier that answers before any model call, tune its confidence threshold against a test set, and make it impossible for it to be confidently wrong.">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<main class="lesson" data-verified="2026-10-17" data-ask="My FAQ has entries that overlap (billing refund vs. membership cancellation). How should I split them so the matcher stops calling them ambiguous?">
+
+<p class="kicker">Lesson 4 of 8 · The answer engine</p>
+<h1>FAQ-first: the deterministic tier</h1>
+<p class="subtitle">The cheapest, fastest, most auditable tier answers first. Its one job is to never be confidently wrong.</p>
+
+<div class="meta">
+  <span><b>Time</b> 25 minutes</span>
+  <span><b>Builds on</b> Lesson 1 (your integration pattern)</span>
+  <span><b>Win</b> A FAQ matcher with a threshold you tuned against a test set</span>
+</div>
+
+<div class="objectives">
+  <span class="label">By the end you can</span>
+  <ul>
+    <li>Explain why a deterministic FAQ tier runs before any model call, using the vocabulary two mature bot platforms use for the same idea.</li>
+    <li>Write FAQ entries that match the way visitors actually type.</li>
+    <li>Tune the two dials (threshold and ambiguity margin) against a test set, and say why “wrong” is worse than “missed.”</li>
+    <li>Drop the tested TypeScript matcher into your Vercel function as tier 1.</li>
+  </ul>
+</div>
+
+<h2>Why this matters for your bot</h2>
+<p>You asked for answers to “come first from a provided FAQ if available.” That instinct is shared by every bot platform that has run at scale. A FAQ hit is <strong>deterministic</strong> (the same question always gets the same curated wording), <strong>cheap</strong> (no tokens), <strong>fast</strong> (microseconds), and <strong>auditable</strong> (you can print every answer the tier will ever give). A model answer is none of those things, however good it is. So the model should see only the questions the FAQ cannot answer.</p>
+
+<p>Rasa calls this a <em>retrieval intent</em> with a <em>rule</em>: FAQs are “non-contextual questions” the assistant “should always answer the same way, no matter what has happened previously in the conversation,” and rules are training data “where a specific condition always predicts a specific next action.”<a class="cite" href="https://legacy-docs-oss.rasa.com/docs/rasa/chitchat-faqs">Rasa Open Source docs: Chitchat and FAQs</a> Google’s Dialogflow CX puts the generative model last by construction: its generative fallback runs only “when end-user input doesn’t match an intent,” and an FAQ data store returns the stored answer unchanged when a question is matched with high confidence.<a class="cite" href="https://docs.cloud.google.com/dialogflow/cx/docs/concept/generative/generative-fallback">Dialogflow CX docs: Generative fallback</a><a class="cite" href="https://docs.cloud.google.com/dialogflow/cx/docs/concept/data-store">Dialogflow CX docs: Data stores</a> You are building the same ordering with fifty lines of TypeScript.</p>
+
+<h2>The FAQ entry</h2>
+<p>An entry is not a question and an answer. It is a <em>cluster of phrasings</em>, one canonical answer, and a pointer to where the answer lives in your approved sources (lesson 5), so the FAQ tier can cite just like the model tier does.</p>
+
+<pre data-lang="typescript" data-file="faq.ts"><code>import type { FaqEntry } from "./faq-match.js";
+
+export const FAQ: FaqEntry[] = [
+  {
+    id: "lost-card",
+    questions: [
+      "I lost my membership card",          // canonical phrasing first
+      "My card is missing",                  // then paraphrases visitors actually type
+      "How do I replace a lost card?",
+    ],
+    answer: "Report it in the app under Membership → Card. A replacement costs $10 and ships in 3–5 days.",
+    source: "https://help.harbor.example/membership/card",   // inside your approved sources
+  },
+];</code></pre>
+
+<ul>
+  <li><strong>Variants come from transcripts, not imagination.</strong> Lesson 3’s webhook stores every chat transcript; once a week, read the questions that fell through and promote the recurring ones into variants. Synonym lists from a thesaurus rarely match how people type under stress.</li>
+  <li><strong>Keep answers short and complete.</strong> The FAQ answer is served verbatim; a visitor should not need a follow-up to act on it.</li>
+  <li><strong>One idea per entry.</strong> If “refunds” and “cancellation” share phrasings, the matcher will call them ambiguous (correctly). Split by the <em>action the visitor wants</em>, not by the page the answer sits on.</li>
+  <li><strong>Date it.</strong> Add a <code>reviewed</code> field in your own schema and let a cron job flag entries older than a quarter. Stale FAQ answers are confidently wrong answers with a timestamp.</li>
+</ul>
+
+<h2>Matching: three strategies, one scale</h2>
+<p>Every strategy in the course module returns a score between 0 and 1, so a single threshold works whichever you choose. All three first <em>normalise</em> the text: lowercase, strip punctuation and apostrophes, drop stop words (“the”, “my”, “how”), and apply a tiny stemmer so <code>bikes</code> and <code>bike</code> agree.</p>
+<table>
+  <thead><tr><th>Strategy</th><th>What it compares</th><th>Use when</th></tr></thead>
+  <tbody>
+    <tr><td><code>exact</code></td><td>Normalised question equals a variant</td><td>Buttons and canned chips, where you control the text</td></tr>
+    <tr><td><code>jaccard</code></td><td>Token-set overlap with the best variant</td><td>Short questions, tiny FAQs; easy to explain to a colleague</td></tr>
+    <tr><td><code>tfidf</code> (default)</td><td>Cosine similarity of tf-idf vectors over variants <em>and</em> the answer</td><td>Most FAQs; rare words like “refund” count for more than “card”</td></tr>
+  </tbody>
+</table>
+<p>When your FAQ grows past a few hundred entries or visitors write long messages, step up in this order: a proper BM25 engine such as MiniSearch (BM25+, fuzzy and prefix matching, zero dependencies, runs in Node and the browser),<a class="cite" href="https://github.com/lucaong/minisearch">MiniSearch repository</a> then embeddings. Anthropic does not offer an embedding model and recommends Voyage AI’s, with an official TypeScript client.<a class="cite" href="https://platform.claude.com/docs/en/build-with-claude/embeddings">Claude docs: Embeddings</a> For a curated FAQ, though, good variants plus lexical matching usually beat embeddings on <em>precision</em>, and precision is what this tier is for.</p>
+
+<h2>The two dials</h2>
+<div class="grid-2">
+  <div class="card">
+    <span class="tag">Dial 1 · threshold</span>
+    <h3>Minimum top score</h3>
+    <p>Below it, the FAQ stays silent and the question falls through to retrieval. Raising it trades <em>missed</em> hits for fewer <em>wrong</em> ones.</p>
+  </div>
+  <div class="card">
+    <span class="tag">Dial 2 · ambiguity margin</span>
+    <h3>Gap to the runner-up</h3>
+    <p>If the top two entries score within the margin, the FAQ declines even when the top clears the threshold. This catches sibling entries (“change email” vs “change email password”) that a single threshold cannot.</p>
+  </div>
+</div>
+
+<p>Here is the whole decision, from the tested module:</p>
+<pre data-lang="typescript" data-file="examples/src/faq-match.ts (decision)"><code>export function matchFaq(faq: FaqEntry[], question: string, opts: FaqMatchOptions = {}): FaqDecision {
+  const { strategy = "tfidf", threshold = 0.5, margin = 0.1 } = opts;
+  const ranked = rankFaq(faq, question, strategy);
+  const top = ranked[0], second = ranked[1];
+  if (!top || top.score &lt;= 0)                         return { hit: false, reason: "empty", ranked };
+  if (top.score &lt; threshold)                           return { hit: false, reason: "below-threshold", ranked };
+  if (second &amp;&amp; margin &gt; 0 &amp;&amp; top.score - second.score &lt; margin)
+                                                       return { hit: false, reason: "ambiguous", ranked };
+  return { hit: true, entry: top.entry, score: top.score, ranked };
+}</code></pre>
+
+<div class="callout warn">
+  <span class="label">Wrong beats missed, and not in a good way</span>
+  <p>A <em>missed</em> FAQ hit falls through to the retrieval tier, which can still answer with citations or hand off to a person. A <em>wrong</em> FAQ hit serves a confident, verbatim answer to the wrong question, and the visitor has no way to tell. Tune for zero wrong first; only then lower the threshold to recover misses. Measure both with a test set, every time the FAQ changes.</p>
+</div>
+
+<h2>Do it: tune the dials</h2>
+<p>The lab below runs the same normalisation and scoring as <code>examples/src/faq-match.ts</code>. The test set mixes paraphrases, near-collisions and out-of-scope questions (expected answer <code>null</code>).</p>
+<ol class="steps">
+  <li>Type a few questions and read the ranked scores. Notice how the <em>answer text</em> helps (“how much is a replacement card” finds the entry whose answer mentions a replacement).</li>
+  <li>Run the test set at the default threshold. Count <strong>wrong</strong> and <strong>missed</strong>.</li>
+  <li>Set the <strong>ambiguity margin to 0</strong> and lower the threshold in small steps until the first wrong answer appears (around 0.2 on this FAQ: an out-of-scope question lands on the e-bike entry). Now restore the margin to 0.1 and run again: the margin rescues that case because the runner-up was close. The clean-sweep window is where your real threshold should sit, with a little headroom.</li>
+  <li>Open the FAQ JSON, add one variant that rescues a missed question, apply, re-run. This is the weekly loop you will run on real transcripts.</li>
+  <li>Switch strategies and repeat. Jaccard and tf-idf will want different thresholds; that is why the number lives in config, not in code.</li>
+</ol>
+
+<div id="faq-lab"></div>
+<details>
+  <summary>Edit the FAQ JSON used by the lab</summary>
+  <textarea id="faq-json" aria-label="FAQ JSON" style="width:100%;min-height:14rem;font-family:var(--font-mono);font-size:.78rem"></textarea>
+  <div class="row" style="margin-top:.5rem"><button type="button" class="btn secondary" id="faq-apply">Apply and remount lab</button> <span class="muted small" id="faq-msg"></span></div>
+</details>
+
+<h2>Where it runs</h2>
+<p>Inside the same Vercel function that calls the model, before the call. The FAQ can ship as a JSON file in the repo (every deploy is a review), or live in a table your team edits. The pipeline in lesson 6 makes this tier 1:</p>
+<pre data-lang="typescript" data-file="examples/src/pipeline.ts (tier 1)"><code>const faq = matchFaq(deps.faq, question, deps.faqOptions);
+if (faq.hit) {
+  return { tier: "faq", text: faq.entry.answer, citations: [{ title: "FAQ", url: faq.entry.source }], confidence: faq.score, handoff: false, reason: `faq:${faq.entry.id}` };
+}
+// …otherwise fall through to approved-source retrieval</code></pre>
+<p class="small muted">Vercel’s own RAG guide ends its system prompt with “if no relevant information is found in the tool calls, respond, ‘Sorry, I don't know.’”<a class="cite" href="https://ai-sdk.dev/cookbook/guides/rag-chatbot">Vercel AI SDK cookbook: RAG Agent</a> Your FAQ tier is the layer <em>above</em> that: it never reaches the model for the questions you already know the answer to.</p>
+
+<h2>Check yourself</h2>
+<div class="quiz" id="quiz-l4" data-title="Check yourself: the deterministic tier">
+<script type="application/json">{"questions":[
+ {"q":"Why does the FAQ tier run before any model call?","options":["Deterministic answers are auditable and cheap","Models cannot read FAQ documents reliably","Vercel functions require a cache layer","Claude citations only work on FAQs"],"answer":0,"explain":"A FAQ hit is the same curated wording every time, costs no tokens, returns in microseconds, and you can list every answer it will ever give. Rasa’s rules and Dialogflow’s fallback ordering encode the same priority.","cite":"https://legacy-docs-oss.rasa.com/docs/rasa/chitchat-faqs"},
+ {"q":"A question scores 0.62 against entry A and 0.58 against entry B, with threshold 0.5 and margin 0.1. What happens?","options":["Fall through: the match is ambiguous","Answer A: it clears the threshold","Answer B: the margin favours it","Answer both: the scores are close"],"answer":0,"explain":"The top clears the threshold, but the gap (0.04) is smaller than the margin (0.1), so the matcher returns reason “ambiguous” and the next tier handles the question."},
+ {"q":"Which outcome should you drive to zero first when tuning?","options":["Wrong confident answers from the FAQ","Questions that fall through to retrieval","Out-of-scope questions reaching the model","Entries that have only one variant"],"answer":0,"explain":"A missed hit is recoverable downstream; a wrong hit is served verbatim with full confidence. Zero wrong first, then recover misses by lowering the threshold or adding variants."},
+ {"q":"Where do the best new question variants come from?","options":["Real transcripts of actual visitor questions","Synonyms generated from a thesaurus list","The canonical answers rewritten as questions","Search engine suggestions for your domain"],"answer":0,"explain":"The questions that fell through last week are the variants you were missing. Lesson 3’s webhook gives you the transcripts to mine."},
+ {"q":"In Dialogflow CX, when does generative fallback run?","options":["When no intent matches the input","Before intents, to classify the input","Whenever the data store returns nothing","After every answer, to rephrase it"],"answer":0,"explain":"Generative fallback is attached to no-match events: it runs “when end-user input doesn’t match an intent or parameter.” Deterministic handling first, generation last.","cite":"https://docs.cloud.google.com/dialogflow/cx/docs/concept/generative/generative-fallback"}
+]}</script>
+</div>
+
+<h2>Recall cards</h2>
+<div class="recall" data-id="l4-why-first"></div>
+<div class="recall" data-id="l4-two-dials"></div>
+<div class="recall" data-id="l4-wrong-vs-missed"></div>
+
+<div class="callout source">
+  <span class="label">Primary sources to read</span>
+  <p>Rasa’s <a href="https://legacy-docs-oss.rasa.com/docs/rasa/chitchat-faqs">Chitchat and FAQs</a> page is the most concise statement of the pattern (ten minutes). Then read Dialogflow CX’s <a href="https://docs.cloud.google.com/dialogflow/cx/docs/concept/generative/generative-fallback">Generative fallback</a> to see a large platform wire generation strictly after deterministic matching.</p>
+</div>
+
+<h2>Carry it into your project</h2>
+<ul class="checklist" id="l4-checklist">
+  <li><input type="checkbox" data-key="schema"><span>FAQ entries have id, 3+ variants, a short canonical answer, a source URL inside the approved sources, and a review date.</span></li>
+  <li><input type="checkbox" data-key="testset"><span>A test set with expected ids, including out-of-scope questions marked <code>null</code>, checked into the repo.</span></li>
+  <li><input type="checkbox" data-key="dials"><span>Threshold and margin live in config; the clean-sweep window is documented next to them.</span></li>
+  <li><input type="checkbox" data-key="loop"><span>A weekly reminder to mine fall-through transcripts for new variants.</span></li>
+  <li><input type="checkbox" data-key="tests"><span><code>npm test</code> in <code>examples/</code> is green after you edit the matcher.</span></li>
+</ul>
+
+</main>
+<script src="../assets/course.js"></script>
+<script src="../assets/recall-bank.js"></script>
+<script src="../assets/quiz.js"></script>
+<script src="../assets/faq-lab.js"></script>
+<script>
+(function () {
+  var FAQ = [
+    { id: 'reset-password', questions: ['How do I reset my password?', 'I forgot my password', "I can't log in to my account"], answer: 'Use “Forgot password” on the sign-in screen. The reset link expires after 30 minutes.', source: 'https://help.harbor.example/account/password' },
+    { id: 'lost-card', questions: ['I lost my membership card', 'My card is missing', 'How do I replace a lost card?'], answer: 'Report it in the app under Membership → Card. A replacement costs $10 and ships in 3–5 days.', source: 'https://help.harbor.example/membership/card' },
+    { id: 'refund', questions: ['Can I get a refund?', 'What is the refund policy?', 'Cancel my membership and get my money back'], answer: 'Annual memberships are refundable within 14 days of purchase. Day passes are not refundable.', source: 'https://help.harbor.example/billing/refunds' },
+    { id: 'hours', questions: ['What are the station hours?', 'When can I rent a bike?'], answer: 'Stations are open 24/7. The support line runs 7am–9pm.', source: 'https://help.harbor.example/riding/hours' },
+    { id: 'ebike', questions: ['Do you have e-bikes?', 'Where are the electric bikes?'], answer: 'E-bikes dock at Riverside and Old Town stations. Annual members get a 20% e-bike discount.', source: 'https://help.harbor.example/riding/ebikes' }
+  ];
+  var TESTS = [
+    { q: 'how do i reset my password', expect: 'reset-password' },
+    { q: 'forgot my password, can you help', expect: 'reset-password' },
+    { q: "can't log in", expect: 'reset-password' },
+    { q: 'i lost my membership card', expect: 'lost-card' },
+    { q: 'my card is gone, what do I do', expect: 'lost-card' },
+    { q: 'how much is a replacement card', expect: 'lost-card' },
+    { q: 'refund policy?', expect: 'refund' },
+    { q: 'can i cancel and get my money back', expect: 'refund' },
+    { q: 'when do stations open', expect: 'hours' },
+    { q: 'do you have electric bikes', expect: 'ebike' },
+    { q: 'where can I find an e-bike', expect: 'ebike' },
+    { q: "what's the weather like today", expect: null },
+    { q: 'do you sell bikes', expect: null },
+    { q: 'can I bring my dog on the bike', expect: null },
+    { q: 'how do I change my email address', expect: null }
+  ];
+  var ta = document.getElementById('faq-json'), msg = document.getElementById('faq-msg');
+  ta.value = JSON.stringify(FAQ, null, 2);
+  function mount(faq) { FaqLab.mount(document.getElementById('faq-lab'), { title: 'Lab: tune the FAQ matcher', faq: faq, tests: TESTS, threshold: 0.5, margin: 0.1 }); }
+  mount(FAQ);
+  document.getElementById('faq-apply').addEventListener('click', function () {
+    try { var faq = JSON.parse(ta.value); if (!Array.isArray(faq)) throw new Error('top level must be an array'); mount(faq); msg.textContent = 'Lab remounted with ' + faq.length + ' entries.'; }
+    catch (e) { msg.textContent = 'JSON error: ' + e.message; }
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reference · tawk.to JavaScript API</title>
+<meta name="description" content="Cheat sheet for window.Tawk_API: settings, methods, callbacks, limits, error codes, secure mode, and the official framework wrappers.">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<main class="lesson" data-verified="2026-10-17" data-ask="Which Tawk_API calls do I need for a handoff, in what order, and which ones must run before the script loads?">
+
+<p class="kicker">Reference sheet · lessons 1, 2, 8</p>
+<h1>tawk.to JavaScript API</h1>
+<p class="subtitle">Everything on <code>window.Tawk_API</code> as documented on 2026-10-17, compressed. Widget 4.3.0.</p>
+
+<h2>Embed</h2>
+<pre data-lang="html"><code>&lt;script&gt;
+var Tawk_API = Tawk_API || {}, Tawk_LoadStart = new Date();
+(function(){ var s1 = document.createElement("script"), s0 = document.getElementsByTagName("script")[0];
+s1.async = true; s1.src = 'https://embed.tawk.to/PROPERTY_ID/WIDGET_ID'; s1.charset = 'UTF-8'; s1.setAttribute('crossorigin','*');
+s0.parentNode.insertBefore(s1, s0); })();
+&lt;/script&gt;</code></pre>
+<ul>
+  <li>IDs: Administration → Overview (Property ID); Channels → Chat Widget (Widget ID, Direct Chat Link). Default widget ID is <code>default</code>.<a class="cite" href="https://help.tawk.to/article/where-can-i-find-the-property-and-widget-id">tawk.to Help: property and widget ID</a></li>
+  <li>Call methods only after the embed code has loaded, inside <code>onLoad</code>.<a class="cite" href="https://developer.tawk.to/jsapi/">tawk.to JavaScript API reference</a></li>
+</ul>
+
+<h2>Settings (set before the script loads)</h2>
+<table>
+  <thead><tr><th>Setting</th><th>Shape</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>Tawk_API.visitor</code></td><td><code>{ name, email, hash?, phone? }</code></td><td>Read at load; later changes are not sent. Phone in E.164. Use <code>setAttributes</code> for SPA/AJAX logins.</td></tr>
+    <tr><td><code>Tawk_API.autoStart</code></td><td><code>false</code></td><td>Widget hidden and disconnected until <code>start()</code>. Default <code>true</code>.</td></tr>
+    <tr><td><code>Tawk_API.customStyle</code></td><td><code>{ zIndex: 1000 }</code></td><td>Officially zIndex only; the React wrapper and help centre also document <code>visibility.{desktop,mobile}.{xOffset,yOffset,position}</code>. Default z-index is 2,000,000,000.</td></tr>
+  </tbody>
+</table>
+
+<h2>Connection and identity</h2>
+<table>
+  <thead><tr><th>Method</th><th>Signature</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>start</code></td><td><code>start({ showWidget?: true })</code></td><td>Opens the socket; shows the widget once connected.</td></tr>
+    <tr><td><code>shutdown</code></td><td><code>shutdown()</code></td><td>Disconnects the socket.</td></tr>
+    <tr><td><code>switchWidget</code></td><td><code>switchWidget({ propertyId, widgetId }, cb(error))</code></td><td>Drops the connection, logs out, switches widget.</td></tr>
+    <tr><td><code>login</code></td><td><code>login({ hash, userId, name?, email?, phone?, ...custom }, cb(error))</code></td><td><code>hash</code> = HMAC-SHA256 of <code>userId</code> with the site API key. Restores the user’s previous conversation; reconnects. Extra keys become custom attributes.</td></tr>
+    <tr><td><code>logout</code></td><td><code>logout(cb(error))</code></td><td>No arguments.</td></tr>
+  </tbody>
+</table>
+
+<h2>Visitor data and context</h2>
+<table>
+  <thead><tr><th>Method</th><th>Signature</th><th>Limits / errors</th></tr></thead>
+  <tbody>
+    <tr><td><code>setAttributes</code></td><td><code>setAttributes({ key: value }, cb(error))</code></td><td>Keys alphanumeric + dash, lower-cased; 50 custom attributes (name, email, hash excluded); values non-empty, ≤ 255 chars; name/email require secure mode + hash. Errors: <code>INVALID_ATTRIBUTES</code>, <code>SESSION_EXPIRED</code>, <code>SERVER_ERROR</code>, <code>ACCESS_ERROR</code>, <code>ATTRIBUTE_LIMIT_EXCEEDED</code>, <code>CONTAINS_INVALID_KEY</code>, <code>CONTAINS_INVALID_VALUE</code>.</td></tr>
+    <tr><td><code>setChatInputMessage</code></td><td><code>setChatInputMessage(text, cb(error))</code></td><td>Pre-fills the input “ready for the visitor to review, edit, and send.” Added in widget 4.2.0 (2026-09-22). Does not send.</td></tr>
+    <tr><td><code>addEvent</code></td><td><code>addEvent(name, metadata?, cb(error))</code></td><td>Name alphanumeric + dash. Errors: <code>INVALID_EVENT_NAME</code>, plus the attribute errors.</td></tr>
+    <tr><td><code>addTags</code> / <code>removeTags</code></td><td><code>addTags(['a','b'], cb(error))</code></td><td>10 tags total. Errors: <code>INVALID_TAGS</code>, <code>TAG_LIMIT_EXCEEDED</code>, <code>VERSION_CONFLICT</code>, <code>SESSION_EXPIRED</code>, <code>SERVER_ERROR</code>.</td></tr>
+  </tbody>
+</table>
+
+<h2>Widget control and state</h2>
+<p><code>maximize()</code> · <code>minimize()</code> · <code>toggle()</code> · <code>popup()</code> · <code>showWidget()</code> · <code>hideWidget()</code> · <code>toggleVisibility()</code> · <code>endChat()</code> · <code>getWindowType()</code> → <code>'inline' | 'embed'</code> · <code>getStatus()</code> → <code>'online' | 'away' | 'offline'</code> · <code>isChatMaximized()</code> · <code>isChatMinimized()</code> · <code>isChatHidden()</code> · <code>isChatOngoing()</code> · <code>isVisitorEngaged()</code>.</p>
+
+<h2>Callbacks (assign functions)</h2>
+<table>
+  <thead><tr><th>Callback</th><th>Receives</th><th>Fires when</th></tr></thead>
+  <tbody>
+    <tr><td><code>onBeforeLoad</code> / <code>onLoad</code></td><td>nothing</td><td>API usable / widget rendered</td></tr>
+    <tr><td><code>onStatusChange</code></td><td><code>'online'|'away'|'offline'</code></td><td>page status changes</td></tr>
+    <tr><td><code>onChatStarted</code> / <code>onChatEnded</code></td><td>nothing</td><td>chat starts / ends</td></tr>
+    <tr><td><code>onChatMaximized</code> / <code>onChatMinimized</code> / <code>onChatHidden</code></td><td>nothing</td><td>widget state changes</td></tr>
+    <tr><td><code>onPrechatSubmit</code></td><td>form data</td><td>pre-chat form submitted</td></tr>
+    <tr><td><code>onOfflineSubmit</code></td><td><code>{ name, email, message, questions[] }</code></td><td>offline form submitted</td></tr>
+    <tr><td><code>onChatMessageVisitor</code> / <code>onChatMessageAgent</code> / <code>onChatMessageSystem</code></td><td><code>{ message?, attachments[] }</code> (object since widget 0.2.0)</td><td>a message is sent</td></tr>
+    <tr><td><code>onAgentJoinChat</code></td><td><code>{ name, position, image, id }</code></td><td>agent joins</td></tr>
+    <tr><td><code>onAgentLeaveChat</code></td><td><code>{ name, id }</code></td><td>agent leaves</td></tr>
+    <tr><td><code>onChatSatisfaction</code></td><td><code>-1 | 0 | 1</code></td><td>rating given</td></tr>
+    <tr><td><code>onVisitorNameChanged</code></td><td>name</td><td>visitor edits their name</td></tr>
+    <tr><td><code>onFileUpload</code></td><td>link</td><td>file uploaded</td></tr>
+    <tr><td><code>onTagsUpdated</code></td><td>data</td><td>tags change</td></tr>
+    <tr><td><code>onTranscriptRequest</code></td><td>email</td><td>visitor requests an email transcript (widget 4.1.0)</td></tr>
+  </tbody>
+</table>
+<p class="small muted">Most callbacks are “not supported in pop out chat window.” Only in the React wrapper: <code>tawkOnUnreadCountChanged</code>, <code>tawkOnLoaded</code>, <code>tawkOnBeforeLoaded</code>, <code>tawkWidgetPosition</code>, and embedded mode via <code>embedId</code>.<a class="cite" href="https://github.com/tawk/tawk-messenger-react/blob/main/docs/api-reference.md">tawk-messenger-react API reference</a></p>
+
+<h2>Secure mode</h2>
+<ul>
+  <li>“The hash is server side generated HMAC using SHA256, the user’s email and your site’s API key.” For <code>login</code>: userId + key.<a class="cite" href="https://developer.tawk.to/jsapi/">tawk.to JavaScript API reference</a> Help articles say “user ID” for both: test once against your dashboard.</li>
+  <li>Key: Administration → Overview → JavaScript API → enable Secure Mode → copy.<a class="cite" href="https://help.tawk.to/article/how-to-generate-a-hash-for-javascript-api">tawk.to Help: generating a hash</a></li>
+  <li>Node: <code>createHmac("sha256", key).update(identifier).digest("hex")</code> (see <code>examples/src/tawk-secure-mode.ts</code>).</li>
+  <li>Mismatch: details silently not updated; <code>login</code> logs 401 in the console.</li>
+</ul>
+
+<h2>Handoff recipe (lesson 2)</h2>
+<pre data-lang="javascript"><code>Tawk_API.onLoad = async () =&gt; {
+  const { userId, hash } = await fetch('/api/tawk-identity').then(r =&gt; r.json());
+  Tawk_API.login({ userId, hash }, log);
+  Tawk_API.setAttributes({ 'bot-last-reason': reason }, log);
+  Tawk_API.addTags(['bot-handoff'], log);
+  Tawk_API.addEvent('bot-handoff', { reason }, log);
+  Tawk_API.setChatInputMessage(summary, log);
+  Tawk_API.maximize();
+};</code></pre>
+
+<h2>Official wrappers</h2>
+<p><code>@tawk.to/tawk-messenger-react</code> 2.0.2 · <code>@tawk.to/tawk-messenger-vue-3</code> · <code>@tawk.to/tawk-messenger-vue-2</code> · <code>@tawk.to/tawk-messenger-angular</code> · <code>@tawk.to/tawk-messenger-ember</code>. Same API, prefixed <code>tawk</code>.<a class="cite" href="https://github.com/tawk/tawk-messenger-react">tawk-messenger-react (GitHub)</a></p>
+
+<h2>Direct Chat Link</h2>
+<p><code>https://tawk.to/chat/{propertyId}/{widgetId}</code>: standalone page, works on mobile, pre-chat form applies, widget must be online, no query parameters.<a class="cite" href="https://help.tawk.to/article/direct-chat-link">tawk.to Help: Direct Chat Link</a></p>
+
+</main>
+<script src="../assets/course.js"></script>
+</body>
+</html>

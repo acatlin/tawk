@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reference · Glossary</title>
+<meta name="description" content="The canonical vocabulary of the course: tawk.to terms, retrieval terms, and the names this course uses for its own parts.">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<main class="lesson" data-verified="2026-10-17" data-ask="Which of these terms do I keep confusing, and can you quiz me on them?">
+
+<p class="kicker">Reference sheet · all lessons</p>
+<h1>Glossary</h1>
+<p class="subtitle">One name per idea. When several words exist, the course picks one and lists the others as aliases to avoid.</p>
+
+<h2>tawk.to</h2>
+<dl>
+  <dt><strong>Widget</strong></dt><dd>The tawk.to chat UI loaded from <code>https://embed.tawk.to/{propertyId}/{widgetId}</code>. <em>Avoid:</em> “plugin”, “chat box”.</dd>
+  <dt><strong>Property</strong></dt><dd>A tawk.to site/workspace with its own settings, agents, widgets and add-ons. IDs: Administration → Overview.</dd>
+  <dt><strong>JavaScript API</strong></dt><dd><code>window.Tawk_API</code>: settings, methods and callbacks exposed by the widget in the browser. <em>Avoid:</em> “tawk SDK” (there is none).</dd>
+  <dt><strong>Secure mode</strong></dt><dd>Identity verification for the widget: a server-side HMAC-SHA256 hash of the visitor identifier with the property’s JavaScript API key. <em>Avoid:</em> “login token”, “JWT”.</dd>
+  <dt><strong>Webhook</strong></dt><dd>A signed POST from tawk.to to your URL for one of four events; HMAC-SHA1 in <code>X-Tawk-Signature</code>; retried for 12 hours with a stable <code>X-Hook-Event-Id</code>.</dd>
+  <dt><strong>Direct Chat Link</strong></dt><dd><code>https://tawk.to/chat/{propertyId}/{widgetId}</code>, a standalone chat page that cannot be pre-filled.</dd>
+  <dt><strong>AI Assist</strong></dt><dd>tawk.to’s paid AI add-on; its default bot persona is “Apollo”. Answers inside the widget from its own data sources. <em>Avoid:</em> “Apollo” as the product name.</dd>
+  <dt><strong>Data source</strong> (AI Assist)</dt><dd>FAQs, text, documents, tables, shortcuts, Knowledge Base articles, websites; retrieval selects up to 5 chunks per inquiry.</dd>
+  <dt><strong>Instructions</strong> (AI Assist)</dt><dd>The agent’s prompt, formerly “Base Prompt”. Where scope restrictions live in Pattern B.</dd>
+  <dt><strong>Knowledge Base</strong></dt><dd>tawk.to’s hosted help centre (<code>name.tawk.help</code>); public published articles feed AI Assist and can appear as widget cards.</dd>
+  <dt><strong>Shortcut</strong></dt><dd>A canned response (<code>/name</code>) with optional files, forms, suggested messages and actions (tag, transfer). AI Assist can send one verbatim when its “AI Questions” match.</dd>
+  <dt><strong>Trigger</strong></dt><dd>An automatic message based on conditions (up to 20 per property); Advanced triggers can match words in the visitor’s message.</dd>
+  <dt><strong>Escalation</strong> (AI Assist)</dt><dd>Paid-plan setting that binds “asks for a human” and “no response found” to a shortcut with a Transfer Chat action.</dd>
+</dl>
+
+<h2>This course’s own names</h2>
+<dl>
+  <dt><strong>Pattern A / B / C</strong></dt><dd>A: your bot is the front door, tawk.to is the human channel. B: AI Assist is the front door, your API is its tool. C: no bot.</dd>
+  <dt><strong>Handoff</strong></dt><dd>Moving a visitor from your bot to a human in tawk.to with identity and context attached. <em>Avoid:</em> “escalation” for this (reserved for AI Assist’s setting), “transfer”.</dd>
+  <dt><strong>Tier</strong></dt><dd>One stage of the answer pipeline: 0 human requested, 1 FAQ, 2 approved sources, 3 fallback.</dd>
+  <dt><strong>FAQ tier</strong></dt><dd>Deterministic matching of a visitor question to a curated entry; returns the canonical answer verbatim. <em>Avoid:</em> “intent matching”.</dd>
+  <dt><strong>Threshold</strong> / <strong>margin</strong></dt><dd>The FAQ tier’s two dials: minimum top score; minimum gap to the runner-up.</dd>
+  <dt><strong>Approved sources</strong></dt><dd>The one or two places answers may come from, expressed as an allow-list of hosts (optionally with a path prefix). <em>Avoid:</em> “whitelist”.</dd>
+  <dt><strong>Grounded</strong></dt><dd>A model answer with text and at least one citation into an allowed chunk. Anything else is a fallback.</dd>
+  <dt><strong>Sentinel</strong></dt><dd>The exact string <code>NOT_IN_SOURCES</code> the model returns when the documents do not answer; detected by code, not by reading prose.</dd>
+  <dt><strong>Reason code</strong></dt><dd>The string on every <code>Answer</code> that explains the decision; your analytics key.</dd>
+</dl>
+
+<h2>Retrieval and Claude</h2>
+<dl>
+  <dt><strong>Chunk</strong></dt><dd>A piece of a source document stored with its URL and title; the unit of retrieval and citation.</dd>
+  <dt><strong>Citation</strong></dt><dd>An API-returned pointer (<code>cited_text</code>, document index, location) into a <code>document</code> block that had <code>citations: { enabled: true }</code>.</dd>
+  <dt><strong>Domain filter</strong></dt><dd><code>allowed_domains</code> / <code>blocked_domains</code> on Claude’s web search and web fetch tools; mutually exclusive; no scheme; subdomains included.</dd>
+  <dt><strong>Prior-context rule</strong></dt><dd>Web fetch only fetches URLs that already appeared in the conversation (user messages, client tool results, earlier results), never URLs only in the system prompt.</dd>
+  <dt><strong>Prompt caching</strong></dt><dd>Reusing a stable prefix (<code>tools</code> → <code>system</code> → <code>messages</code>) across requests via <code>cache_control</code>; verify with <code>cache_read_input_tokens</code>.</dd>
+  <dt><strong>tf-idf cosine</strong></dt><dd>Lexical similarity that weights rare words more; bounded 0..1; the FAQ tier’s default.</dd>
+  <dt><strong>BM25</strong></dt><dd>The standard lexical ranking function (MiniSearch implements BM25+); the step up from tf-idf for larger FAQs.</dd>
+  <dt><strong>Embeddings</strong></dt><dd>Vectors for semantic similarity; Anthropic has no embedding model and recommends Voyage AI.</dd>
+  <dt><strong>Contextual retrieval</strong></dt><dd>Prepending a short document-aware context to each chunk before indexing; Anthropic measured large reductions in retrieval failure.</dd>
+  <dt><strong>Graph RAG</strong></dt><dd>“RAG, where the Retrieval path includes a knowledge graph.” Local search for entity-centred questions; global search for corpus-wide ones.</dd>
+  <dt><strong>Triple</strong></dt><dd>(subject, predicate, object) with provenance; the atom of the course’s graph prototype.</dd>
+  <dt><strong>Community report</strong></dt><dd>Microsoft GraphRAG’s LLM-written summary of a cluster of entities (found with hierarchical Leiden); the unit global search reads.</dd>
+  <dt><strong>Multi-hop question</strong></dt><dd>One that needs two or more facts joined across chunks; where graphs earn their keep.</dd>
+</dl>
+
+<h2>Vercel and Android</h2>
+<dl>
+  <dt><strong>Vercel Function</strong></dt><dd>A serverless handler; this course uses the web-standard <code>export async function POST(request: Request)</code> form.</dd>
+  <dt><strong>Raw body</strong></dt><dd>The exact request bytes (<code>await request.text()</code>), required for signature verification.</dd>
+  <dt><strong>Idempotency key</strong></dt><dd>A delivery id stored so retries are ignored; for tawk.to, <code>X-Hook-Event-Id</code>.</dd>
+  <dt><strong>Shell</strong> (Android)</dt><dd>What wraps your bot on a phone: a Trusted Web Activity, a Capacitor app, or a native Kotlin app.</dd>
+  <dt><strong>WebView chat screen</strong></dt><dd>The in-app page that loads the tawk.to widget, identifies the visitor, and bridges callbacks to native code.</dd>
+</dl>
+
+</main>
+<script src="../assets/course.js"></script>
+</body>
+</html>

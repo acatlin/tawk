@@ -1,0 +1,22 @@
+{
+  "name": "tawk-course-examples",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Tested TypeScript companions to the tawk.to x Claude chatbot lessons",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "check": "npm run typecheck && npm test"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.135.0"
+  }
+}

@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reference · Retrieval & Graph RAG</title>
+<meta name="description" content="One-page cheat sheet: approved-source retrieval with Claude citations, domain filter rules, FAQ-tier dials, caching facts, and the Graph RAG decision table.">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<main class="lesson" data-verified="2026-10-17" data-ask="Which of these numbers should I re-check before I rely on them in production?">
+
+<p class="kicker">Reference sheet · lessons 4, 5, 7</p>
+<h1>Retrieval &amp; Graph RAG</h1>
+<p class="subtitle">The compressed essence of the answer-engine lessons. Print it; pin it next to your editor.</p>
+
+<h2>The tiers, in order</h2>
+<table>
+  <thead><tr><th>Tier</th><th>Answers when</th><th>Returns</th><th>Guard</th></tr></thead>
+  <tbody>
+    <tr><td>0 · Human requested</td><td>Visitor asks for a person</td><td>Handoff into tawk.to</td><td>Phrase list; never argue</td></tr>
+    <tr><td>1 · FAQ</td><td>Top score ≥ threshold and gap to runner-up ≥ margin</td><td>Canonical answer verbatim + source URL</td><td>Test set: zero wrong first</td></tr>
+    <tr><td>2 · Approved sources</td><td>Retrieval finds allowed chunks and the model cites them</td><td>Grounded text + citations</td><td><code>isAllowedUrl()</code> ×3, <code>NOT_IN_SOURCES</code> sentinel</td></tr>
+    <tr><td>3 · Fallback</td><td>Everything else</td><td>Honest “not in my sources” + offer of a person</td><td><code>handoff: true</code></td></tr>
+  </tbody>
+</table>
+
+<h2>FAQ tier dials (lesson 4)</h2>
+<ul>
+  <li><strong>Scores are 0..1</strong> for <code>exact</code>, <code>jaccard</code>, <code>tfidf</code>; one threshold works across strategies.</li>
+  <li><strong>threshold</strong>: minimum top score. <strong>margin</strong>: minimum gap to the runner-up (catches sibling entries).</li>
+  <li><strong>Tune order</strong>: zero <em>wrong</em> → fewest <em>missed</em> → add variants from real transcripts.</li>
+  <li>Step up to BM25 (MiniSearch, BM25+ with fuzzy/prefix) past a few hundred entries; embeddings after that (Anthropic recommends Voyage AI; Anthropic has no embedding model).<a class="cite" href="https://github.com/lucaong/minisearch">MiniSearch</a><a class="cite" href="https://platform.claude.com/docs/en/build-with-claude/embeddings">Claude docs: Embeddings</a></li>
+  <li>Precedent: Rasa retrieval intents + rules; Dialogflow CX generative fallback only on no-match.<a class="cite" href="https://legacy-docs-oss.rasa.com/docs/rasa/chitchat-faqs">Rasa: Chitchat and FAQs</a><a class="cite" href="https://docs.cloud.google.com/dialogflow/cx/docs/concept/generative/generative-fallback">Dialogflow CX: Generative fallback</a></li>
+</ul>
+
+<h2>Citations request shape (lesson 5)</h2>
+<pre data-lang="json"><code>{ "type": "document",
+  "source": { "type": "text", "media_type": "text/plain", "data": "chunk text" },
+  "title": "Support channels",
+  "context": "Source URL: https://help.harbor.example/support",   // read, never cited
+  "citations": { "enabled": true } }</code></pre>
+<ul>
+  <li>Enable on <strong>all or none</strong> of the documents in a request. All active models support citations.<a class="cite" href="https://platform.claude.com/docs/en/build-with-claude/citations">Claude docs: Citations</a></li>
+  <li>Plain text and PDF are chunked into <strong>sentences</strong>; custom-content documents are cited block by block with no re-chunking.</li>
+  <li>Response: several <code>text</code> blocks; cited ones carry <code>citations[]</code> with <code>cited_text</code>, <code>document_index</code>, <code>document_title</code>, and <code>char_location</code> (0-indexed start, exclusive end) / <code>page_location</code> (1-indexed) / <code>content_block_location</code>.</li>
+  <li><code>cited_text</code> is <strong>not billed</strong> as output tokens, nor as input when passed back.</li>
+  <li><strong>Incompatible with structured outputs</strong> (<code>output_config.format</code>): 400.</li>
+</ul>
+
+<h2>Domain filter rules (web search / web fetch)</h2>
+<table>
+  <thead><tr><th>Rule</th><th>Example</th></tr></thead>
+  <tbody>
+    <tr><td>No scheme</td><td><code>example.com</code>, not <code>https://example.com</code></td></tr>
+    <tr><td>Bare domain includes subdomains</td><td><code>example.com</code> covers <code>docs.example.com</code></td></tr>
+    <tr><td>Named subdomain restricts to itself</td><td><code>docs.example.com</code> excludes <code>example.com</code>, <code>api.example.com</code></td></tr>
+    <tr><td>Paths: web search only</td><td><code>example.com/blog</code> matches <code>/blog/post-1</code>; a path entry never matches a web <em>fetch</em></td></tr>
+    <tr><td>allowed XOR blocked</td><td>Both in one request → 400</td></tr>
+    <tr><td>Wildcards only in paths</td><td><code>example.com/*</code> ok; <code>*.example.com</code> rejected</td></tr>
+    <tr><td>ASCII only</td><td>Homograph domains look identical and are not</td></tr>
+  </tbody>
+</table>
+<p class="small muted">Source: server tools docs.<a class="cite" href="https://platform.claude.com/docs/en/agents-and-tools/tool-use/server-tools#domain-filtering">Claude docs: Server tools, domain filtering</a> Web fetch extras: latest type <code>web_fetch_20260318</code>; params <code>max_uses</code>, <code>allowed_domains</code>, <code>citations</code>, <code>max_content_tokens</code>, <code>use_cache</code>; only URLs already in the conversation are fetchable (<code>url_not_in_prior_context</code>); no JavaScript rendering; no extra fee beyond tokens (≈2,500 tokens per 10 kB page).<a class="cite" href="https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-fetch-tool">Claude docs: Web fetch tool</a> Web search costs $10 per 1,000 searches and always cites.<a class="cite" href="https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool">Claude docs: Web search tool</a></p>
+
+<h2>Prompt caching facts</h2>
+<ul>
+  <li><code>cache_control: { type: "ephemeral" }</code> on a block, or top-level for automatic placement; up to 4 breakpoints; prefix order is <code>tools</code> → <code>system</code> → <code>messages</code>.</li>
+  <li>Minimum cacheable prefix: 512 tokens on Claude 5.x models (Opus 5.5, Sonnet 5.5, Haiku 5.5, Fable 5.1); 1,024–4,096 on older models. Shorter prefixes are silently not cached.</li>
+  <li>TTL 5 minutes by default, refreshed on every hit; <code>ttl: "1h"</code> available. Writes cost 1.25× (5 min) or 2× (1 h); reads 0.1× (0.05× on Opus 5.5 / Sonnet 5.5).</li>
+  <li>Verify with <code>usage.cache_read_input_tokens</code>.<a class="cite" href="https://platform.claude.com/docs/en/build-with-claude/prompt-caching">Claude docs: Prompt caching</a></li>
+</ul>
+
+<h2>Retrieval quality levers (when you move past the FAQ)</h2>
+<ul>
+  <li><strong>Contextual retrieval</strong>: prepend a 50–100 token, document-aware context to each chunk before embedding and BM25-indexing. Anthropic measured top-20 retrieval failure falling from 5.7% to 3.7% (embeddings), 2.9% (+BM25), 1.9% (+reranking). Below ~200k tokens, skip retrieval and cache the whole corpus.<a class="cite" href="https://www.anthropic.com/news/contextual-retrieval">Anthropic: Contextual Retrieval</a></li>
+  <li><strong>Summary indexing + reranking</strong>: Anthropic’s RAG cookbook raised end-to-end accuracy from 71% to 81% on its own docs.<a class="cite" href="https://platform.claude.com/cookbook/capabilities-retrieval-augmented-generation-guide">Claude cookbook: RAG guide</a></li>
+  <li><strong>Stores reachable from Vercel</strong>: Postgres + pgvector (Neon, Supabase; <code>&lt;=&gt;</code> is cosine distance, HNSW index), Upstash Vector (REST, hybrid dense+BM25), Pinecone (Node ≥ 22).<a class="cite" href="https://neon.com/docs/extensions/pgvector">Neon: pgvector</a><a class="cite" href="https://upstash.com/docs/vector/overall/getstarted">Upstash Vector</a><a class="cite" href="https://docs.pinecone.io/reference/node-sdk">Pinecone Node SDK</a></li>
+  <li><strong>Vercel AI SDK</strong>: <code>embed</code>, <code>embedMany</code>, <code>cosineSimilarity</code> from <code>ai</code>; the Anthropic provider exposes <code>webFetch_20260318</code>/<code>webSearch_20260318</code> and <code>cacheControl</code>, but no embedding model.<a class="cite" href="https://ai-sdk.dev/providers/ai-sdk-providers/anthropic">AI SDK: Anthropic provider</a></li>
+</ul>
+
+<h2>Graph RAG decision table (lesson 7)</h2>
+<table>
+  <thead><tr><th>Question shape</th><th>Chunks</th><th>Graph (local)</th><th>Graph (global)</th></tr></thead>
+  <tbody>
+    <tr><td>One fact on one page</td><td><span class="badge ok">best</span></td><td>equal, costlier</td><td>wasteful</td></tr>
+    <tr><td>Two facts joined across pages (multi-hop)</td><td>misses the bridge at small k</td><td><span class="badge ok">best</span></td><td>n/a</td></tr>
+    <tr><td>Themes across the corpus</td><td>cannot</td><td>cannot</td><td><span class="badge ok">best</span>, prone to answering null questions</td></tr>
+    <tr><td>Unanswerable question</td><td>refuses well</td><td>ok with sentinel</td><td><span class="badge bad">hallucinates</span></td></tr>
+  </tbody>
+</table>
+<ul>
+  <li>Definition: “GraphRAG is RAG, where the Retrieval path includes a knowledge graph.”<a class="cite" href="https://neo4j.com/blog/genai/graphrag-manifesto/">Neo4j: GraphRAG manifesto</a></li>
+  <li>Microsoft pipeline: TextUnits (1200 tokens) → entities/relationships/claims → hierarchical Leiden → community reports → embeddings; modes Local, Global, DRIFT, Basic.<a class="cite" href="https://microsoft.github.io/graphrag/index/default_dataflow/">Microsoft GraphRAG: default dataflow</a></li>
+  <li>Measured: NQ F1 64.78 (RAG) vs 63.01 (GraphRAG); MultiHop-RAG 70.27 vs 67.02; null queries 19.27 (global) vs 96.01; indexing 135 s vs 5,560–7,702 s.<a class="cite" href="https://arxiv.org/abs/2502.11371">arXiv 2502.11371</a> Prompt tokens per query 879 (vanilla) vs ~38.7k (local) vs ~331k (global).<a class="cite" href="https://arxiv.org/abs/2506.05690">GraphRAG-Bench</a></li>
+  <li>JS tooling: graphology (Louvain), neo4j-driver, <code>@langchain/neo4j</code>; LlamaIndex graphs are Python-only.</li>
+</ul>
+
+<h2>Prototype API (examples/)</h2>
+<pre data-lang="typescript"><code>matchFaq(faq, question, { strategy: "tfidf", threshold: 0.5, margin: 0.1 })  // → { hit, entry|reason, ranked }
+isAllowedUrl(url, ["harbor.example", "docs.partner.example/help"])               // → boolean
+groundedAnswer(question, chunks)                                                 // → { text, citations, grounded }
+answer(question, { faq, allowedSources, retrieve, generate })                    // → { tier, text, citations, handoff }
+new GraphIndex(parseTriples(text)).neighborhood(seeds, 2)                        // → { nodes, triples }</code></pre>
+
+</main>
+<script src="../assets/course.js"></script>
+</body>
+</html>

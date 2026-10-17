@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lesson 3 · Webhooks into Vercel: verify, dedupe, store</title>
+<meta name="description" content="tawk.to's four webhook events, the HMAC-SHA1 signature over the raw body, a retry policy that double-delivers, and a Vercel function that handles all of it.">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<main class="lesson" data-verified="2026-10-17" data-ask="Walk me through what happens byte by byte between tawk.to sending a transcript and my Postgres row existing, including every place it can fail.">
+
+<p class="kicker">Lesson 3 of 8 · The human channel</p>
+<h1>Webhooks into Vercel: verify, dedupe, store</h1>
+<p class="subtitle">The only channel from tawk.to to your server: four events, one signature, a retry policy that will double-deliver, and a transcript stream that teaches your FAQ.</p>
+
+<div class="meta">
+  <span><b>Time</b> 30 minutes</span>
+  <span><b>Builds on</b> Lesson 1</span>
+  <span><b>Win</b> A Vercel endpoint that rejects forgeries, ignores retries, and stores transcripts</span>
+</div>
+
+<div class="objectives">
+  <span class="label">By the end you can</span>
+  <ul>
+    <li>Name the four webhook events, their key fields, and the one thing none of them gives you.</li>
+    <li>Verify the HMAC-SHA1 signature over the raw body in a Vercel function, in constant time.</li>
+    <li>Make the endpoint idempotent with <code>X-Hook-Event-Id</code> and fast enough for the 30-second timeout.</li>
+    <li>Turn transcripts into FAQ variants and a handoff log.</li>
+  </ul>
+</div>
+
+<h2>Why this matters for your bot</h2>
+<p>In Pattern A your bot already knows its own conversations. What it does not know is what happened after the handoff: whether a human picked up, what they said, what the visitor really wanted. Webhooks are how tawk.to tells you. They close the loop that lesson 4 depends on (real questions become FAQ variants) and give you the handoff analytics that lesson 6 reports on.</p>
+
+<h2>The four events</h2>
+<p>tawk.to posts JSON to your URL for exactly four events; nothing fires per message, so the conversation is never streamed to you live.<a class="cite" href="https://developer.tawk.to/webhooks/">tawk.to webhooks reference</a></p>
+<table>
+  <thead><tr><th>Event</th><th>Fires when</th><th>Fields you will use</th></tr></thead>
+  <tbody>
+    <tr><td><code>chat:start</code></td><td>“the first message in a chat is sent by visitor or agent. Whispers and system notifications like triggers do not generate this event.”</td><td><code>chatId</code>, <code>time</code>, <code>domain</code>, <code>message.text</code>, <code>message.sender.type</code>, <code>visitor.{name,email,city,country}</code>, <code>property.id</code></td></tr>
+    <tr><td><code>chat:end</code></td><td>a chat has ended</td><td><code>chatId</code>, <code>time</code>, <code>visitor</code>, <code>property</code></td></tr>
+    <tr><td><code>chat:transcript_created</code></td><td>“Sent automatically after all chats with a customer have ended. A transcript of the entire conversation is sent after 3 minutes of inactivity.”<a class="cite" href="https://help.tawk.to/article/creating-and-managing-webhooks">tawk.to Help: creating and managing webhooks</a></td><td><code>chat.id</code>, <code>chat.visitor</code>, <code>chat.messages[]</code> with <code>sender.t</code> (<code>a</code> agent, <code>v</code> visitor, <code>s</code> system), <code>msg</code>, <code>time</code>, optional <code>attchs[]</code></td></tr>
+    <tr><td><code>ticket:create</code></td><td>a new ticket is created</td><td><code>requester.{name,email}</code>, <code>ticket.{id,humanId,subject,message}</code>, <code>property</code></td></tr>
+  </tbody>
+</table>
+<p class="small muted">Two consequences. First, the payloads carry the visitor’s name and email but <em>not</em> the custom attributes or tags you set in lesson 2, so if you want to join a tawk.to transcript to a bot session, put a short session reference in the drafted summary message; it will be in the transcript. Second, “the first message” means <code>chat:start</code> arrives with a <code>message.text</code>: in a handoff that is your drafted summary.</p>
+
+<h2>The signature</h2>
+<p>“Each webhook event is signed via a Hash-based Message Authentication Code (HMAC) using the webhooks secret key. The HMAC-SHA1 algorithm is used to generate the webhook payload signature. The signature is passed along with each request in the headers as ‘X-Tawk-Signature.’”<a class="cite" href="https://developer.tawk.to/webhooks/">tawk.to webhooks reference</a> The official Node example computes a hex digest over the <em>raw</em> request body; it even configures body-parser’s <code>verify</code> hook just to capture those bytes before parsing.</p>
+
+<div class="callout">
+  <span class="label">The byte rule</span>
+  <p>An HMAC is over bytes, not over meaning. If you <code>JSON.parse</code> the body and sign <code>JSON.stringify</code> of the result, whitespace and key order can differ and the signature will not match. Capture the raw body first, verify, and only then parse. In a Vercel function with the web-standard handler signature that is one line: <code>const rawBody = await request.text()</code>. Vercel verifies its own webhooks the same way.<a class="cite" href="https://vercel.com/docs/webhooks/webhooks-api">Vercel docs: webhooks API (signature validation)</a></p>
+</div>
+
+<p>Compare in constant time. Node’s <code>crypto.timingSafeEqual</code> needs equal-length buffers, so check length first; the tested module does this for you:</p>
+<pre data-lang="typescript" data-file="examples/src/tawk-webhook.ts (excerpt)"><code>export function signTawkPayload(rawBody: string | Buffer, secret: string): string {
+  return createHmac("sha1", secret).update(rawBody).digest("hex");
+}
+
+export function verifyTawkSignature(rawBody: string | Buffer, signature: string | null | undefined, secret: string): boolean {
+  if (!signature) return false;
+  const expected = Buffer.from(signTawkPayload(rawBody, secret), "hex");
+  let given: Buffer;
+  try { given = Buffer.from(signature.trim(), "hex"); } catch { return false; }
+  if (given.length !== expected.length || given.length === 0) return false;
+  return timingSafeEqual(given, expected);
+}</code></pre>
+
+<h2>Retries: design for duplicates</h2>
+<p>“A webhook call will be retried for up to 12 hours if the http endpoint responds with anything but a success (2XX). If no response is received within 30 seconds, the call will be considered a failure and will also be reattempted. Each webhook event is assigned an event Id. The event Id is passed along with each request in the headers as X-Hook-Event-Id. The event Id will remain the same in case of retries.”<a class="cite" href="https://developer.tawk.to/webhooks/">tawk.to webhooks reference</a> The help centre adds the operational translation: “Make sure your system can handle duplicate requests safely.”<a class="cite" href="https://help.tawk.to/article/how-to-send-chat-transcripts-via-webhooks">tawk.to Help: sending chat transcripts via webhooks</a></p>
+<ul>
+  <li><strong>Idempotency key</strong>: store processed <code>X-Hook-Event-Id</code> values in a shared store (Postgres, KV). A module-level <code>Map</code> lives in one function instance and vanishes between invocations; it is fine for tests, wrong for production.</li>
+  <li><strong>Respond first, work later</strong>: verify, dedupe, persist the raw event, return 200. Summaries, FAQ mining and notifications run afterwards, from a queue or via <code>waitUntil</code> from <code>@vercel/functions</code>.<a class="cite" href="https://vercel.com/docs/functions/functions-api-reference">Vercel docs: Functions API reference</a> Thirty seconds is generous for a database insert and stingy for a model call.</li>
+  <li><strong>Return 2XX for events you ignore</strong>, or tawk.to will keep retrying them for twelve hours.</li>
+</ul>
+
+<h2>The handler, in order</h2>
+<figure class="diagram">
+<svg viewBox="0 0 760 120" role="img" aria-label="Webhook handler order: raw body, verify, parse, dedupe, store, respond, then side effects">
+  <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" class="arrowhead"/></marker></defs>
+  <rect class="node" x="5" y="30" width="95" height="50" rx="9"/><text x="52" y="52" text-anchor="middle">raw body</text><text x="52" y="68" text-anchor="middle" class="small">request.text()</text>
+  <path class="edge" d="M100 55 L125 55"/>
+  <rect class="node accent" x="125" y="30" width="95" height="50" rx="9"/><text x="172" y="52" text-anchor="middle" class="title">verify</text><text x="172" y="68" text-anchor="middle" class="small">401 if wrong</text>
+  <path class="edge" d="M220 55 L245 55"/>
+  <rect class="node" x="245" y="30" width="95" height="50" rx="9"/><text x="292" y="52" text-anchor="middle">parse</text><text x="292" y="68" text-anchor="middle" class="small">400 if malformed</text>
+  <path class="edge" d="M340 55 L365 55"/>
+  <rect class="node accent" x="365" y="30" width="95" height="50" rx="9"/><text x="412" y="52" text-anchor="middle" class="title">dedupe</text><text x="412" y="68" text-anchor="middle" class="small">200 if seen</text>
+  <path class="edge" d="M460 55 L485 55"/>
+  <rect class="node" x="485" y="30" width="95" height="50" rx="9"/><text x="532" y="52" text-anchor="middle">store</text><text x="532" y="68" text-anchor="middle" class="small">shared DB</text>
+  <path class="edge" d="M580 55 L605 55"/>
+  <rect class="node warm" x="605" y="30" width="70" height="50" rx="9"/><text x="640" y="52" text-anchor="middle" class="title">200</text><text x="640" y="68" text-anchor="middle" class="small">fast</text>
+  <path class="edge dashed" d="M675 55 L700 55"/>
+  <rect class="node muted" x="700" y="30" width="55" height="50" rx="9"/><text x="727" y="58" text-anchor="middle" class="small">later</text>
+</svg>
+<figcaption>Never parse before verifying: a forged body should not even reach <code>JSON.parse</code>. Never do slow work before responding.</figcaption>
+</figure>
+
+<pre data-lang="typescript" data-file="examples/api/tawk-webhook.ts"><code>import { handleTawkWebhook, MemoryWebhookStore, TAWK_EVENT_ID_HEADER, TAWK_SIGNATURE_HEADER } from "../src/tawk-webhook.js";
+
+const store = new MemoryWebhookStore();   // swap for Postgres/KV: memory is per-instance
+
+export async function POST(request: Request): Promise&lt;Response&gt; {
+  const rawBody = await request.text();                       // the exact bytes tawk.to signed
+  const result = await handleTawkWebhook(
+    { rawBody, signature: request.headers.get(TAWK_SIGNATURE_HEADER), eventId: request.headers.get(TAWK_EVENT_ID_HEADER) },
+    { secret: process.env["TAWK_WEBHOOK_SECRET"] ?? "", store,
+      onEvent: async (event) =&gt; { if (event.event === "chat:transcript_created") { /* enqueue for FAQ mining */ } } },
+  );
+  return new Response(result.body, { status: result.status });
+}</code></pre>
+<p class="small muted">Vercel Functions accept this web-standard <code>POST(request: Request)</code> export directly.<a class="cite" href="https://vercel.com/docs/functions/functions-api-reference">Vercel docs: Functions API reference</a> The handler itself (<code>handleTawkWebhook</code>) has no framework dependency, which is why its seven tests run without a server.</p>
+
+<h2>Configure it in tawk.to</h2>
+<ol class="steps">
+  <li>Deploy, so the URL exists: <code>https://your-app.vercel.app/api/tawk-webhook</code>. “The URL must support HTTPS and accept JSON POST requests.”<a class="cite" href="https://help.tawk.to/article/how-to-send-chat-transcripts-via-webhooks">tawk.to Help: sending chat transcripts via webhooks</a></li>
+  <li>In tawk.to: Administration → Settings → Webhooks → Create Webhook; give it a name, the endpoint URL, and tick the events. “You can have up to 10 webhooks per property.”<a class="cite" href="https://help.tawk.to/article/creating-and-managing-webhooks">tawk.to Help: creating and managing webhooks</a></li>
+  <li>Put the webhook’s secret key into Vercel as <code>TAWK_WEBHOOK_SECRET</code> for the environment that serves that URL. The developer page says every webhook “consists of … A secret key”; the dashboard shows it on the webhook you created. If you register a second webhook for a staging URL, it gets its own secret.</li>
+  <li>Send yourself a signed test from your machine, twice with the same id, then once tampered:
+<pre data-lang="bash"><code>cd examples
+npx tsx scripts/send-test-webhook.ts https://your-app.vercel.app/api/tawk-webhook "$TAWK_WEBHOOK_SECRET" chat:start --id test-1
+npx tsx scripts/send-test-webhook.ts https://your-app.vercel.app/api/tawk-webhook "$TAWK_WEBHOOK_SECRET" chat:start --id test-1
+npx tsx scripts/send-test-webhook.ts https://your-app.vercel.app/api/tawk-webhook "$TAWK_WEBHOOK_SECRET" chat:start --tamper</code></pre>
+  Expect <code>200 ok chat:start</code>, then <code>200 duplicate ignored</code> (once your store is shared), then <code>401 invalid signature</code>.</li>
+</ol>
+
+<div id="hmac-lab"></div>
+
+<h2>What to do with transcripts</h2>
+<p>A transcript is a list of messages with sender type <code>a</code>, <code>v</code> or <code>s</code>. The module’s <code>transcriptToText()</code> flattens one into “role: text” lines. Two jobs run on them weekly:</p>
+<ul>
+  <li><strong>FAQ mining</strong> (lesson 4): every visitor line in a chat that reached a human is a candidate variant or a candidate new entry. Group by your FAQ ids using the matcher itself, and read the fall-throughs.</li>
+  <li><strong>Handoff log</strong> (lesson 6): join the transcript to the bot session via the reference you put in the drafted summary, and compute handoff rate, time to first agent message, and the reasons that led there.</li>
+</ul>
+
+<h2>Check yourself</h2>
+<div class="quiz" id="quiz-l3" data-title="Check yourself: webhooks">
+<script type="application/json">{"questions":[
+ {"q":"Which algorithm signs tawk.to webhook payloads?","options":["HMAC-SHA1 over the raw body","HMAC-SHA256 over the JSON object","RSA signature over the headers","SHA-1 of the secret only"],"answer":0,"explain":"“The HMAC-SHA1 algorithm is used to generate the webhook payload signature,” hex-encoded in X-Tawk-Signature, computed over the raw body with the webhook secret.","cite":"https://developer.tawk.to/webhooks/"},
+ {"q":"Your handler parses the JSON, re-serialises it, and signs that. Verification fails. Why?","options":["Re-serialising changes bytes; sign raw body","tawk.to signs headers, not bodies","The secret rotates on every delivery","JSON.parse strips the signature header first"],"answer":0,"explain":"An HMAC is over exact bytes. Whitespace and key order change when you stringify a parsed object. Read request.text() first, verify, then parse."},
+ {"q":"A delivery times out after 35 seconds of processing. What happens next?","options":["tawk.to retries it with the same id","tawk.to drops the event and logs failure","tawk.to sends a chat:end event instead","tawk.to disables the webhook until re-saved"],"answer":0,"explain":"No response within 30 seconds counts as failure; retries continue for up to 12 hours, with X-Hook-Event-Id unchanged, so your store must recognise the repeat.","cite":"https://developer.tawk.to/webhooks/"},
+ {"q":"Which event carries the full conversation?","options":["chat:transcript_created, after three minutes","chat:end, immediately on closing","chat:start, with first message","ticket:create, with the message"],"answer":0,"explain":"The transcript event fires after all chats in a session have ended and three minutes of inactivity have passed; chat:start carries only the first message.","cite":"https://help.tawk.to/article/creating-and-managing-webhooks"},
+ {"q":"Where must the dedupe store live on Vercel?","options":["In a shared database or KV","In a module-level Map in memory","In the request headers themselves","In Vercel's build output cache"],"answer":0,"explain":"Function instances come and go; memory is per instance. Retries can land hours later on a different instance, so the seen-ids set must be shared."}
+]}</script>
+</div>
+
+<h2>Recall cards</h2>
+<div class="recall" data-id="l3-raw-body"></div>
+<div class="recall" data-id="l3-retries"></div>
+<div class="recall" data-id="l3-events"></div>
+
+<div class="callout source">
+  <span class="label">Primary source to read</span>
+  <p>The <a href="https://developer.tawk.to/webhooks/">webhooks reference</a>: it is short, has every payload example, and the retry policy is three sentences. Then the help article <a href="https://help.tawk.to/article/creating-and-managing-webhooks">Creating and managing webhooks</a> for the dashboard steps.</p>
+</div>
+
+<h2>Carry it into your project</h2>
+<ul class="checklist" id="l3-checklist">
+  <li><input type="checkbox" data-key="deployed"><span><code>/api/tawk-webhook</code> deployed; <code>TAWK_WEBHOOK_SECRET</code> set per environment.</span></li>
+  <li><input type="checkbox" data-key="registered"><span>Webhook registered in tawk.to for the four events (or the ones you need).</span></li>
+  <li><input type="checkbox" data-key="tests"><span>Signed, duplicate and tampered test deliveries behave: 200, 200 duplicate, 401.</span></li>
+  <li><input type="checkbox" data-key="store"><span>Event ids and raw events persisted in a shared store, not memory.</span></li>
+  <li><input type="checkbox" data-key="sessionref"><span>Drafted handoff summaries include a session reference so transcripts can be joined to bot sessions.</span></li>
+</ul>
+
+</main>
+<script src="../assets/course.js"></script>
+<script src="../assets/recall-bank.js"></script>
+<script src="../assets/quiz.js"></script>
+<script src="../assets/hmac-lab.js"></script>
+<script>HmacLab.mount(document.getElementById('hmac-lab'), { title: 'Lab: sign, tamper, verify, retry', secret: 'whsec_demo' });</script>
+</body>
+</html>

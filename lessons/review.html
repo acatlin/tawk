@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spaced review · all lessons</title>
+<meta name="description" content="Every recall card in the course, due-first, interleaved across lessons. Ten minutes, two or three times a week, is what turns fluency into storage.">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<main class="lesson" data-no-footer>
+<p class="kicker">Spaced review · interleaved</p>
+<h1>Spaced review</h1>
+<p class="subtitle">Every recall card from all eight lessons, due-first and interleaved. Ten minutes, two or three times a week, is what turns fluency into storage.</p>
+
+<div class="callout">
+  <span class="label">How to use this page</span>
+  <p>Say the answer out loud or type it before revealing. Grade yourself honestly: “Got it” moves a card to the next box (1 → 3 → 7 → 14 → 30 days); “Missed it” brings it back tomorrow. Cards you have never seen are mixed in at the end. Progress is stored in this browser only.</p>
+</div>
+
+<div class="row" style="font-family:var(--font-sans);font-size:.85rem;display:flex;gap:1rem;flex-wrap:wrap;margin:1rem 0">
+  <span id="rv-stats" class="muted"></span>
+  <label><input type="checkbox" id="rv-due-only"> show only due and new cards</label>
+  <button type="button" class="btn quiet" id="rv-shuffle">Shuffle</button>
+</div>
+
+<div id="rv-cards"></div>
+
+<div class="callout ask">
+  <span class="label">Ask your teacher</span>
+  <p>A card you keep missing is a question for the agent. Open a terminal in the course folder, run <code>claude</code>, and ask it to explain that card a different way, or to give you a fresh scenario that exercises the same idea.</p>
+</div>
+</main>
+<script src="../assets/course.js"></script>
+<script src="../assets/recall-bank.js"></script>
+<script src="../assets/quiz.js"></script>
+<script>
+(function () {
+  var store = window.Course.store, bank = window.RECALL_BANK.slice();
+  var host = document.getElementById('rv-cards'), stats = document.getElementById('rv-stats'), dueOnly = document.getElementById('rv-due-only');
+  function state(id) { return store.get('recall:' + id) || { box: 0, due: 0, seen: 0 }; }
+  function render(shuffle) {
+    host.innerHTML = '';
+    var now = Date.now(), cards = bank.map(function (c) { var s = state(c.id); return { c: c, s: s, due: s.seen ? s.due : null }; });
+    var dueCount = cards.filter(function (x) { return x.s.seen && x.due <= now; }).length, newCount = cards.filter(function (x) { return !x.s.seen; }).length, later = cards.length - dueCount - newCount;
+    stats.textContent = dueCount + ' due · ' + newCount + ' new · ' + later + ' scheduled later';
+    cards.sort(function (a, b) {
+      var ra = a.s.seen ? (a.due <= now ? 0 : 2) : 1, rb = b.s.seen ? (b.due <= now ? 0 : 2) : 1;
+      if (ra !== rb) return ra - rb;
+      if (shuffle) return Math.random() - 0.5;
+      return (a.due || 0) - (b.due || 0) || a.c.lesson - b.c.lesson;
+    });
+    if (dueOnly.checked) cards = cards.filter(function (x) { return !x.s.seen || x.due <= now; });
+    if (!cards.length) { host.appendChild(window.Course.el('p', { 'class': 'muted', text: 'Nothing due. Come back tomorrow, or untick the filter to review ahead.' })); return; }
+    cards.forEach(function (x) {
+      var d = document.createElement('div'); d.className = 'recall'; d.setAttribute('data-id', x.c.id); d.setAttribute('data-title', 'Lesson ' + x.c.lesson);
+      host.appendChild(d); window.CourseQuiz.initRecall(d);
+    });
+  }
+  dueOnly.addEventListener('change', function () { render(false); });
+  document.getElementById('rv-shuffle').addEventListener('click', function () { render(true); });
+  render(false);
+})();
+</script>
+</body>
+</html>
