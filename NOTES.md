@@ -22,3 +22,7 @@
 - Design system: assets/course.css (tokens, dark mode, print), course.js (nav, citations → Sources list, copy buttons, checklists), quiz.js (equal-length-option quizzes, Leitner recall cards), recall-bank.js, labs: tawk-sim.js, faq-lab.js, hmac-lab.js, graph-lab.js.
 - Open questions to ask Andy next session: (1) is the Android app a web shell or native Kotlin? (2) which two sources exactly? (3) does he want Pattern B's hybrid (expose answer() as an OpenAPI tool)?
 - Candidate lesson 9 topics, by zone of proximal development: building the approved-source index (crawl → chunk → store on Neon/pgvector or Upstash) with contextual retrieval; evaluation set + hillclimbing for the pipeline; tawk.to Knowledge Base authoring from the FAQ with Claude.
+
+## Session log: 2026-10-18
+- Enabled GitHub Pages (branch main, root) at https://acatlin.github.io/tawk/ and set it as the repo homepage; added `.nojekyll` so files deploy verbatim.
+- Added `examples/test/grounded-answer.live.test.ts`: the real Claude request inside `groundedAnswer()` (citable document blocks, refusal fallback, NOT_IN_SOURCES sentinel), the one path the offline suite mocks. Skips itself unless `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` is set. Excluded from `npm test`; run with `npm run test:live`. CI job `live` runs it with the `ANTHROPIC_API_KEY` repo secret and shows "skipped" until Andy adds that secret.

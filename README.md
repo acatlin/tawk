@@ -2,7 +2,7 @@
 
 Eight short HTML lessons, five reference sheets, and a tested TypeScript companion package for integrating **tawk.to** live chat with a **Claude-powered chatbot** on **Vercel**, with answers that come first from a curated FAQ and otherwise only from one or two approved sources, on the web and on Android.
 
-Open `index.html` in a browser to start. No build step: the lessons are plain HTML plus a shared stylesheet and a few small components.
+Read it online at **https://acatlin.github.io/tawk/**, or open `index.html` locally. No build step: the lessons are plain HTML plus a shared stylesheet and a few small components.
 
 ## The premise
 
@@ -34,7 +34,8 @@ Plus a [spaced review](lessons/review.html) page that interleaves every recall c
 ```bash
 cd examples
 npm install
-npm run check          # typecheck + tests
+npm run check          # typecheck + tests (offline)
+npm run test:live      # real Claude call through groundedAnswer(); skipped unless ANTHROPIC_API_KEY is set
 npx tsx scripts/ask-grounded.ts "Which support channel do annual members get?"   # needs ANTHROPIC_API_KEY
 npx tsx scripts/send-test-webhook.ts https://your-app.vercel.app/api/tawk-webhook "$TAWK_WEBHOOK_SECRET" chat:start
 ```

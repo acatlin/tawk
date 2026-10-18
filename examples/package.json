@@ -6,6 +6,7 @@
   "description": "Tested TypeScript companions to the tawk.to x Claude chatbot lessons",
   "scripts": {
     "test": "vitest run",
+    "test:live": "vitest run --config vitest.live.config.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "check": "npm run typecheck && npm test"
   },

@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   examples:
@@ -32,3 +33,23 @@ jobs:
         with:
           node-version: 22
       - run: node scripts/check-links.mjs
+
+  live:
+    # Real Claude call through groundedAnswer(). Reports "skipped" until the
+    # repository has the ANTHROPIC_API_KEY secret (and always on fork PRs).
+    name: live smoke test (examples/, needs ANTHROPIC_API_KEY secret)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: examples
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: examples/package-lock.json
+      - run: npm ci
+      - run: npm run test:live
